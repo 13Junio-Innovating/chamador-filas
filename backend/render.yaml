@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: costao-chamador-backend
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: warn
+      - key: TRUST_PROXY
+        value: "true"
+      - key: SECURE_COOKIES
+        value: "true"
+    # Database and other sensitive env vars should be added via Render dashboard

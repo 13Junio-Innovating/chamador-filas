@@ -1,0 +1,12 @@
+{
+  "login": {
+    "email": "admin@admin.com",
+    "senha": "admin123"
+  },
+  "register": {
+    "nome": "Usuário Teste",
+    "email": "teste@teste.com",
+    "senha": "teste123",
+    "role": "usuario"
+  }
+}

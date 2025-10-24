@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste WebSocket - Sistema de Senhas</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .connected { background-color: #d4edda; color: #155724; }
+        .disconnected { background-color: #f8d7da; color: #721c24; }
+        .event-log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .event {
+            margin-bottom: 8px;
+            padding: 5px;
+            border-left: 3px solid #007bff;
+            background-color: white;
+        }
+        .event.password-generated { border-left-color: #28a745; }
+        .event.password-called { border-left-color: #ffc107; }
+        .event.password-attended { border-left-color: #17a2b8; }
+        .event.password-cancelled { border-left-color: #dc3545; }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        .clear-btn { background-color: #6c757d; }
+        .clear-btn:hover { background-color: #545b62; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 Teste WebSocket - Sistema de Senhas</h1>
+        
+        <div id="connection-status" class="status disconnected">
+            ❌ Desconectado
+        </div>
+        
+        <div>
+            <button onclick="generatePassword()">🎫 Gerar Nova Senha</button>
+            <button onclick="clearLog()" class="clear-btn">🗑️ Limpar Log</button>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>📋 Log de Eventos WebSocket</h2>
+        <div id="event-log" class="event-log">
+            <div class="event">Aguardando conexão WebSocket...</div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        let socket;
+        let eventCount = 0;
+        
+        function addEvent(type, message, data = null) {
+            eventCount++;
+            const log = document.getElementById('event-log');
+            const timestamp = new Date().toLocaleTimeString();
+            
+            const eventDiv = document.createElement('div');
+            eventDiv.className = `event ${type}`;
+            eventDiv.innerHTML = `
+                <strong>[${eventCount}] ${timestamp}</strong> - ${type.toUpperCase()}<br>
+                ${message}
+                ${data ? `<br><small>Dados: ${JSON.stringify(data, null, 2)}</small>` : ''}
+            `;
+            
+            log.appendChild(eventDiv);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function updateConnectionStatus(connected) {
+            const status = document.getElementById('connection-status');
+            if (connected) {
+                status.className = 'status connected';
+                status.innerHTML = '✅ Conectado ao servidor WebSocket';
+            } else {
+                status.className = 'status disconnected';
+                status.innerHTML = '❌ Desconectado do servidor WebSocket';
+            }
+        }
+        
+        function connectWebSocket() {
+            try {
+                socket = io('http://localhost:3001', {
+                    transports: ['websocket', 'polling']
+                });
+                
+                socket.on('connect', () => {
+                    addEvent('connection', 'Conectado ao servidor WebSocket');
+                    updateConnectionStatus(true);
+                });
+                
+                socket.on('disconnect', (reason) => {
+                    addEvent('connection', `Desconectado: ${reason}`);
+                    updateConnectionStatus(false);
+                });
+                
+                socket.on('connect_error', (error) => {
+                    addEvent('error', `Erro de conexão: ${error.message}`);
+                    updateConnectionStatus(false);
+                });
+                
+                // Eventos do sistema de senhas
+                socket.on('password-generated', (data) => {
+                    addEvent('password-generated', 'Nova senha gerada!', data);
+                });
+                
+                socket.on('password-called', (data) => {
+                    addEvent('password-called', 'Senha chamada para atendimento!', data);
+                });
+                
+                socket.on('password-attended', (data) => {
+                    addEvent('password-attended', 'Senha atendida!', data);
+                });
+                
+                socket.on('password-cancelled', (data) => {
+                    addEvent('password-cancelled', 'Senha cancelada!', data);
+                });
+                
+                socket.on('queue-updated', (data) => {
+                    addEvent('queue-updated', 'Fila de senhas atualizada!', data);
+                });
+                
+            } catch (error) {
+                addEvent('error', `Erro ao conectar: ${error.message}`);
+                updateConnectionStatus(false);
+            }
+        }
+        
+        async function generatePassword() {
+            try {
+                addEvent('api-call', 'Gerando nova senha via API...');
+                
+                const response = await fetch('http://localhost:3001/api/passwords/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        tipo: 'normal',
+                        servico: 'recepcao'
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    addEvent('api-success', 'Senha gerada com sucesso via API!', result.data);
+                } else {
+                    addEvent('api-error', `Erro ao gerar senha: ${result.message}`);
+                }
+                
+            } catch (error) {
+                addEvent('api-error', `Erro na requisição: ${error.message}`);
+            }
+        }
+        
+        function clearLog() {
+            const log = document.getElementById('event-log');
+            log.innerHTML = '<div class="event">Log limpo - aguardando novos eventos...</div>';
+            eventCount = 0;
+        }
+        
+        // Conectar automaticamente ao carregar a página
+        window.addEventListener('load', () => {
+            addEvent('system', 'Página carregada - iniciando conexão WebSocket...');
+            connectWebSocket();
+        });
+    </script>
+</body>
+</html>
