@@ -33,55 +33,69 @@ function normalizeTipo(tipo: string): string {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+// Tipos específicos para a fila de anúncios
+interface AnuncioSenha {
+  tipo: 'senha';
+  dados: Senha;
+}
+
+interface AnuncioGrupo {
+  tipo: 'grupo';
+  dados: Senha[];
+}
+
+type AnuncioItem = AnuncioSenha | AnuncioGrupo;
+
 export default function Painel() {
   const [chamando, setChamando] = useState<Senha[]>([]);
   const [proximas, setProximas] = useState<Senha[]>([]);
   const [finalizadas, setFinalizadas] = useState<Senha[]>([]);
-  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(true);
   const [tempos, setTempos] = useState<Record<string, string>>({});
   const [voice, setVoice] = useState<SpeechSynthesisVoice | null>(null);
-  const prevIdsRef = useRef<string[]>([]);
+  const prevIdsRef = useRef<Set<string>>(new Set());
+  
+  // Sistema de fila de anúncios com tipos específicos
+  const [filaAnuncios, setFilaAnuncios] = useState<AnuncioItem[]>([]);
+  const [anunciandoAtualmente, setAnunciandoAtualmente] = useState(false);
 
-  // Persistência do estado de áudio para manter a voz ligada mesmo após refresh
+  // Por padrão, o áudio deve estar habilitado (true)
   useEffect(() => {
-    const saved = localStorage.getItem('painel_audio_enabled');
-    // Por padrão, o áudio deve estar habilitado (true)
-    setAudioEnabled(saved !== null ? saved === 'true' : true);
+    const savedAudio = localStorage.getItem('audioEnabled');
+    if (savedAudio !== null) {
+      setAudioEnabled(JSON.parse(savedAudio));
+    } else {
+      setAudioEnabled(true);
+      localStorage.setItem('audioEnabled', 'true');
+    }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('painel_audio_enabled', String(audioEnabled));
+    localStorage.setItem('audioEnabled', JSON.stringify(audioEnabled));
   }, [audioEnabled]);
 
-  const beep = () => {
-    try {
-      const Ctor = window.AudioContext || window.webkitAudioContext;
-      if (!Ctor) return;
-      const ctx = new Ctor();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g);
-      g.connect(ctx.destination);
-      o.type = "sine";
-      o.frequency.value = 880;
-      g.gain.setValueAtTime(0.001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6);
-      o.start();
-      o.stop(ctx.currentTime + 0.6);
-    } catch (error: unknown) {
-      console.error("Erro ao emitir beep:", error);
-    }
-  };
+  // Função para processar a fila de anúncios - otimizada
+  const processarFilaAnuncios = useCallback(() => {
+    if (anunciandoAtualmente || filaAnuncios.length === 0) return;
 
-  const anunciarSenha = (senha: Senha) => {
+    const proximoAnuncio = filaAnuncios[0];
+    setAnunciandoAtualmente(true);
+
+    if (proximoAnuncio.tipo === 'senha') {
+      executarAnuncioSenha(proximoAnuncio.dados);
+    } else if (proximoAnuncio.tipo === 'grupo') {
+      executarAnuncioGrupo(proximoAnuncio.dados);
+    }
+  }, [anunciandoAtualmente, filaAnuncios.length]); // Otimizado: apenas length ao invés do array completo
+
+  // Executar anúncio individual
+  const executarAnuncioSenha = useCallback((senha: Senha) => {
     if (!audioEnabled || !window.speechSynthesis) {
-      console.log('Anúncio cancelado - Audio:', audioEnabled, 'SpeechSynthesis:', !!window.speechSynthesis);
+      finalizarAnuncio();
       return;
     }
 
     try {
-      // Cancelar qualquer fala anterior
       window.speechSynthesis.cancel();
       
       const tipoNorm = normalizeTipo(senha.tipo);
@@ -98,34 +112,39 @@ export default function Painel() {
       const textoBase = `Senha ${numeroFormatado}, tipo ${prefixoMap[tipoNorm] || senha.tipo}`;
       const texto = senha.guiche ? `${textoBase}, encaminhar ao guichê ${senha.guiche}.` : `${textoBase}.`;
       
-      console.log('Anunciando:', texto);
-      
       const utterance = new SpeechSynthesisUtterance(texto);
       utterance.lang = "pt-BR";
-      utterance.rate = 0.9; // Um pouco mais devagar
+      utterance.rate = 0.9;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
       
       if (voice) {
         utterance.voice = voice;
-        console.log('Usando voz:', voice.name);
-      } else {
-        console.log('Nenhuma voz específica selecionada');
       }
       
-      // Eventos para debug
-      utterance.onstart = () => console.log('Iniciou fala');
-      utterance.onend = () => console.log('Terminou fala');
-      utterance.onerror = (e) => console.error('Erro na fala:', e);
+      utterance.onend = () => {
+        finalizarAnuncio();
+      };
+      utterance.onerror = () => {
+        finalizarAnuncio();
+      };
       
       window.speechSynthesis.speak(utterance);
     } catch (e) {
-      console.error("Erro ao anunciar:", e);
+      finalizarAnuncio();
     }
-  };  const anunciarGrupo = (senhas: Senha[]) => {
-    if (!audioEnabled || !window.speechSynthesis) return;
+  }, [audioEnabled, voice]);
+
+  // Executar anúncio de grupo
+  const executarAnuncioGrupo = useCallback((senhas: Senha[]) => {
+    if (!audioEnabled || !window.speechSynthesis) {
+      finalizarAnuncio();
+      return;
+    }
 
     try {
+      window.speechSynthesis.cancel();
+      
       const numeros = senhas.map((s) => `${getPrefixo(s.tipo)} ${String(s.numero).padStart(3, "0")}`);
       const guichesUnicos = Array.from(new Set(senhas.map(s => s.guiche).filter(Boolean))) as (string | number)[];
       const fraseGuiches = guichesUnicos.length
@@ -134,16 +153,80 @@ export default function Painel() {
             : ` Encaminhar aos guichês ${guichesUnicos.join(', ')}.`)
         : '';
       const texto = `Chamando as senhas ${numeros.join(', ')}.${fraseGuiches}`;
+      
       const utterance = new SpeechSynthesisUtterance(texto);
       utterance.lang = "pt-BR";
-      utterance.rate = 1.0;
+      utterance.rate = 0.9;
       utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      
       if (voice) utterance.voice = voice;
+      
+      utterance.onend = () => {
+        finalizarAnuncio();
+      };
+      utterance.onerror = () => {
+        finalizarAnuncio();
+      };
+      
       window.speechSynthesis.speak(utterance);
     } catch (error: unknown) {
-      console.error("Erro ao anunciar grupo:", error);
+      finalizarAnuncio();
     }
-  };
+  }, [audioEnabled, voice]);
+
+  // Finalizar anúncio atual e processar próximo - otimizada
+  const finalizarAnuncio = useCallback(() => {
+    setAnunciandoAtualmente(false);
+    setFilaAnuncios(prev => prev.slice(1));
+  }, []);
+
+  // Adicionar anúncio à fila - com tipos específicos
+  const adicionarAnuncioFila = useCallback((item: AnuncioItem) => {
+    setFilaAnuncios(prev => [...prev, item]);
+  }, []);
+
+  // Processar fila quando houver mudanças - otimizado
+  useEffect(() => {
+    if (!anunciandoAtualmente && filaAnuncios.length > 0) {
+      processarFilaAnuncios();
+    }
+  }, [filaAnuncios.length, anunciandoAtualmente, processarFilaAnuncios]);
+
+  // Função beep otimizada
+  const beep = useCallback(() => {
+    if (!audioEnabled) return;
+    
+    try {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioContext = new AudioContextClass();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+    } catch (e) {
+      // Silencioso para evitar spam no console
+    }
+  }, [audioEnabled]);
+
+  // Funções públicas que agora usam a fila - otimizadas
+  const anunciarSenha = useCallback((senha: Senha) => {
+    adicionarAnuncioFila({ tipo: 'senha', dados: senha });
+  }, [adicionarAnuncioFila]);
+
+  const anunciarGrupo = useCallback((senhas: Senha[]) => {
+    adicionarAnuncioFila({ tipo: 'grupo', dados: senhas });
+  }, [adicionarAnuncioFila]);
 
   const carregar = useCallback(async () => {
     try {
@@ -177,7 +260,7 @@ export default function Painel() {
       // Detectar novas senhas chamando
       const newIds = chamandoAtual.map(s => s.id).sort();
       const prevIds = prevIdsRef.current;
-      const hasNew = newIds.some(id => !prevIds.includes(id));
+      const hasNew = newIds.some(id => !prevIds.has(id));
 
       setChamando(chamandoAtual);
       setProximas(aguardando.slice(0, 8));
@@ -192,17 +275,10 @@ export default function Painel() {
 
       // Anunciar novas senhas (incluindo a primeira)
       if (hasNew && audioEnabled) {
-        console.log('Detectando novas senhas para anunciar...');
-        console.log('Audio habilitado:', audioEnabled);
-        console.log('Tem novas senhas:', hasNew);
-        console.log('PrevIds:', prevIds);
-        console.log('NewIds:', newIds);
-        
         // Aguardar um pouco para garantir que as vozes estejam carregadas
         setTimeout(() => {
           beep();
-          const novos = chamandoAtual.filter(s => !prevIds.includes(s.id));
-          console.log('Novas senhas detectadas:', novos);
+          const novos = chamandoAtual.filter(s => !prevIds.has(s.id));
           
           if (novos.length > 1) {
             anunciarGrupo(novos);
@@ -212,7 +288,8 @@ export default function Painel() {
         }, 500); // Delay de 500ms para garantir que tudo esteja pronto
       }
 
-      prevIdsRef.current = newIds;
+      // Atualizar referência dos IDs anteriores
+      prevIdsRef.current = new Set(newIds);
     } catch (e) {
       console.error("Erro ao carregar:", e);
     }
