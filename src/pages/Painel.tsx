@@ -45,6 +45,7 @@ export default function Painel() {
   // Persistência do estado de áudio para manter a voz ligada mesmo após refresh
   useEffect(() => {
     const saved = localStorage.getItem('painel_audio_enabled');
+    // Por padrão, o áudio deve estar habilitado (true)
     setAudioEnabled(saved !== null ? saved === 'true' : true);
   }, []);
 
@@ -74,9 +75,15 @@ export default function Painel() {
   };
 
   const anunciarSenha = (senha: Senha) => {
-    if (!audioEnabled || !window.speechSynthesis) return;
+    if (!audioEnabled || !window.speechSynthesis) {
+      console.log('Anúncio cancelado - Audio:', audioEnabled, 'SpeechSynthesis:', !!window.speechSynthesis);
+      return;
+    }
 
     try {
+      // Cancelar qualquer fala anterior
+      window.speechSynthesis.cancel();
+      
       const tipoNorm = normalizeTipo(senha.tipo);
       const prefixoMap: Record<string, string> = {
         "normal": "normal",
@@ -90,11 +97,27 @@ export default function Painel() {
       const numeroFormatado = `${getPrefixo(senha.tipo)} ${String(senha.numero).padStart(3, "0")}`;
       const textoBase = `Senha ${numeroFormatado}, tipo ${prefixoMap[tipoNorm] || senha.tipo}`;
       const texto = senha.guiche ? `${textoBase}, encaminhar ao guichê ${senha.guiche}.` : `${textoBase}.`;
+      
+      console.log('Anunciando:', texto);
+      
       const utterance = new SpeechSynthesisUtterance(texto);
       utterance.lang = "pt-BR";
-      utterance.rate = 1.0;
+      utterance.rate = 0.9; // Um pouco mais devagar
       utterance.pitch = 1.0;
-      if (voice) utterance.voice = voice;
+      utterance.volume = 1.0;
+      
+      if (voice) {
+        utterance.voice = voice;
+        console.log('Usando voz:', voice.name);
+      } else {
+        console.log('Nenhuma voz específica selecionada');
+      }
+      
+      // Eventos para debug
+      utterance.onstart = () => console.log('Iniciou fala');
+      utterance.onend = () => console.log('Terminou fala');
+      utterance.onerror = (e) => console.error('Erro na fala:', e);
+      
       window.speechSynthesis.speak(utterance);
     } catch (e) {
       console.error("Erro ao anunciar:", e);
@@ -169,18 +192,24 @@ export default function Painel() {
 
       // Anunciar novas senhas (incluindo a primeira)
       if (hasNew && audioEnabled) {
-        beep();
-        const novos = chamandoAtual.filter(s => !prevIds.includes(s.id));
-        console.log('Novas senhas detectadas:', novos);
+        console.log('Detectando novas senhas para anunciar...');
         console.log('Audio habilitado:', audioEnabled);
+        console.log('Tem novas senhas:', hasNew);
         console.log('PrevIds:', prevIds);
         console.log('NewIds:', newIds);
         
-        if (novos.length > 1) {
-          anunciarGrupo(novos);
-        } else if (novos.length === 1) {
-          anunciarSenha(novos[0]);
-        }
+        // Aguardar um pouco para garantir que as vozes estejam carregadas
+        setTimeout(() => {
+          beep();
+          const novos = chamandoAtual.filter(s => !prevIds.includes(s.id));
+          console.log('Novas senhas detectadas:', novos);
+          
+          if (novos.length > 1) {
+            anunciarGrupo(novos);
+          } else if (novos.length === 1) {
+            anunciarSenha(novos[0]);
+          }
+        }, 500); // Delay de 500ms para garantir que tudo esteja pronto
       }
 
       prevIdsRef.current = newIds;
@@ -190,11 +219,19 @@ export default function Painel() {
   }, [audioEnabled]);
 
   useEffect(() => {
-    if (!window.speechSynthesis) return;
+    if (!window.speechSynthesis) {
+      console.log('SpeechSynthesis não disponível neste navegador');
+      return;
+    }
 
     const chooseVoice = (voices: SpeechSynthesisVoice[]) => {
+      console.log('Vozes disponíveis:', voices.map(v => `${v.name} (${v.lang})`));
+      
       const pt = voices.filter(v => v.lang?.toLowerCase().startsWith('pt'));
       const ptBr = voices.filter(v => v.lang?.toLowerCase().startsWith('pt-br'));
+      
+      console.log('Vozes PT-BR:', ptBr.map(v => v.name));
+      console.log('Vozes PT:', pt.map(v => v.name));
       
       // Priorizar vozes femininas
       const femaleVoices = [...ptBr, ...pt].filter(v => 
@@ -207,12 +244,26 @@ export default function Painel() {
       const googleFemale = femaleVoices.find(v => /google/i.test(v.name));
       
       // Ordem de preferência: Google feminina > qualquer feminina > Google PT-BR > primeira PT-BR > primeira PT
-      setVoice(googleFemale || femaleVoices[0] || googlePtBr || ptBr[0] || pt[0] || null);
+      const selectedVoice = googleFemale || femaleVoices[0] || googlePtBr || ptBr[0] || pt[0] || voices[0] || null;
+      
+      console.log('Voz selecionada:', selectedVoice?.name || 'Nenhuma');
+      setVoice(selectedVoice);
     };
 
-    const loadVoices = () => chooseVoice(window.speechSynthesis.getVoices());
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        chooseVoice(voices);
+      } else {
+        console.log('Aguardando carregamento das vozes...');
+      }
+    };
+    
+    // Carregar vozes imediatamente
     loadVoices();
+    
+    // E também quando o evento disparar
+    window.speechSynthesis.onvoiceschanged = loadVoices;
 
     return () => {
       window.speechSynthesis.onvoiceschanged = null;
