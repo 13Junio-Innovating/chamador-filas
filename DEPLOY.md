@@ -142,6 +142,24 @@ Configure o backend para aceitar requests do domínio de produção.
 
 Verifique se as variáveis começam com `VITE_` e estão no arquivo correto.
 
+### Supabase não resolve domínio (DNS corporativo)
+
+Se o host do Supabase não resolve (por exemplo, `Non-existent domain` ao executar `nslookup`), o problema pode ser o DNS corporativo. Para contornar em ambiente local:
+
+- No Windows, troque o DNS de rede para público (Cloudflare `1.1.1.1`/`1.0.0.1` ou Google `8.8.8.8`/`8.8.4.4`).
+- Após ajustar, valide com `nslookup <seu-projeto>.supabase.co`.
+- No backend local, volte `DB_TYPE=postgresql` no arquivo `.env` e reinicie (`npm run dev`).
+
+### Verificação local de saúde do backend
+
+- Backend: `http://localhost:3001/health` deve retornar `200 OK` com `{ success: true }`.
+- Frontend (Vite): rodando em `http://localhost:8080/` (ou porta padrão do seu projeto), use `VITE_API_BASE_URL=http://localhost:3001` apenas em ambiente local.
+
+### Boas práticas de variáveis de ambiente
+
+- Não versione `.env` (use `.env.example` e variáveis em ambiente de deploy).
+- No Vercel, configure `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` e `VITE_API_BASE_URL` nas configurações do projeto e faça o redeploy.
+
 ---
 
 **Status**: ✅ Pronto para deploy
