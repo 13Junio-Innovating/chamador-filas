@@ -34,8 +34,12 @@ export const gerarSenha = async (req, res) => {
     
     // Verificar limite de senhas por usuário (apenas se autenticado)
     if (userId) {
+      // Ajustar placeholders conforme o banco
+      const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
+      const ph2 = config.database.type === 'sqlite' ? '?' : '$2';
+      const ph3 = config.database.type === 'sqlite' ? '?' : '$3';
       const senhasAtivas = await dbQuery(
-        'SELECT COUNT(*) as count FROM senhas WHERE user_id = ? AND status IN (?, ?)',
+        `SELECT COUNT(*) as count FROM senhas WHERE user_id = ${ph1} AND status IN (${ph2}, ${ph3})`,
         [userId, 'aguardando', 'chamando']
       );
       
@@ -48,8 +52,9 @@ export const gerarSenha = async (req, res) => {
     }
     
     // Obter próximo número da senha
+    const phDate = config.database.type === 'sqlite' ? '?' : '$1';
     const ultimaSenha = await dbQuery(
-      'SELECT numero FROM senhas WHERE DATE(created_at) = DATE(?) ORDER BY numero DESC LIMIT 1',
+      `SELECT numero FROM senhas WHERE DATE(created_at) = DATE(${phDate}) ORDER BY numero DESC LIMIT 1`,
       [new Date().toISOString().split('T')[0]]
     );
     
@@ -82,42 +87,86 @@ export const gerarSenha = async (req, res) => {
     }
     
     const senhaCompleta = `${prefixo}${proximoNumero.toString().padStart(3, '0')}`;
-    
+
     // Criar nova senha
     const senhaId = uuidv4();
     const agora = new Date().toISOString();
     
-    // Preparar campos para inserção
-    const insertFields = [
-      'id', 'numero', 'prefixo', 'tipo', 'prioridade', 'status', 'user_id', 'created_at', 'updated_at'
-    ];
-    const insertValues = [
-      senhaId, proximoNumero, prefixo, tipo, prioridade ? 'express' : 'comum', 'aguardando', userId, agora, agora
-    ];
-    
-    // Adicionar campos compostos se fornecidos
-    if (tipo_checkin) {
-      insertFields.push('tipo_checkin');
-      insertValues.push(tipo_checkin);
+    // Detectar colunas disponíveis na tabela `senhas` para evitar erros em diferentes bancos
+    let senhasColumns = [];
+    try {
+      // Tentar via Information Schema (PostgreSQL)
+      const colsPg = await dbQuery(
+        "SELECT column_name as name FROM information_schema.columns WHERE table_name = 'senhas'"
+      );
+      if (Array.isArray(colsPg) && colsPg.length && colsPg[0].name) {
+        senhasColumns = colsPg.map((c) => c.name);
+      } else if (colsPg?.rows) {
+        senhasColumns = colsPg.rows.map((r) => r.name || r.column_name).filter(Boolean);
+      }
+    } catch (e) {
+      // Fallback para SQLite
+      try {
+        const colsSqlite = await dbQuery('PRAGMA table_info(senhas)');
+        if (colsSqlite?.rows) {
+          senhasColumns = colsSqlite.rows.map((r) => r.name).filter(Boolean);
+        }
+      } catch (_) {
+        // Ignorar
+      }
     }
-    if (prioridade_nivel) {
-      insertFields.push('prioridade_nivel');
-      insertValues.push(prioridade_nivel);
+
+    // Montar inserção dinamicamente com base nas colunas existentes
+    const insertFields = [];
+    const insertValues = [];
+
+    const pushIfExists = (col, value) => {
+      if (senhasColumns.length === 0 || senhasColumns.includes(col)) {
+        insertFields.push(col);
+        insertValues.push(value);
+      }
+    };
+
+    pushIfExists('id', senhaId);
+    pushIfExists('numero', proximoNumero);
+    pushIfExists('tipo', tipo);
+    pushIfExists('status', 'aguardando');
+    pushIfExists('created_at', agora);
+    pushIfExists('updated_at', agora);
+    
+    // Campos opcionais dependentes do schema
+    pushIfExists('prefixo', prefixo);
+    // Mapear prioridade: quando true, usar 'express'; caso contrário, 'comum'
+    pushIfExists('prioridade', prioridade ? 'express' : 'comum');
+    pushIfExists('user_id', userId);
+    pushIfExists('tipo_checkin', tipo_checkin);
+    pushIfExists('prioridade_nivel', prioridade_nivel);
+    pushIfExists('senha_completa', senhaCompleta);
+
+    // Garantir que há pelo menos os campos essenciais
+    if (!insertFields.includes('id') || !insertFields.includes('numero') || !insertFields.includes('tipo')) {
+      throw new Error('Estrutura da tabela `senhas` incompatível: campos essenciais ausentes');
     }
-    
-    const placeholders = insertValues.map((_, index) => `?`).join(', ');
-    
+
+    // Construir placeholders conforme o banco
+    let placeholders;
+    if (config.database.type === 'sqlite') {
+      placeholders = insertValues.map(() => '?').join(', ');
+    } else {
+      placeholders = insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
+    }
     await dbQuery(
       `INSERT INTO senhas (${insertFields.join(', ')}) VALUES (${placeholders})`,
       insertValues
     );
     
     // Buscar dados completos da senha criada
+    const phId = config.database.type === 'sqlite' ? '?' : '$1';
     const novaSenha = await dbQuery(
       `SELECT s.*, u.nome as user_name 
        FROM senhas s 
        LEFT JOIN usuarios u ON s.user_id = u.id 
-       WHERE s.id = ?`,
+       WHERE s.id = ${phId}`,
       [senhaId]
     );
     
@@ -518,20 +567,23 @@ export const obterHistorico = async (req, res) => {
 // Função auxiliar para obter posição na fila
 const getQueuePosition = async (senhaId) => {
   try {
+    const phId = config.database.type === 'sqlite' ? '?' : '$1';
     const senha = await dbQuery(
-      'SELECT created_at, prioridade FROM senhas WHERE id = ?',
+      `SELECT created_at, prioridade FROM senhas WHERE id = ${phId}`,
       [senhaId]
     );
     
     if (!senha || senha.length === 0 || !senha[0]) return null;
     
+    const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
+    const ph2 = config.database.type === 'sqlite' ? '?' : '$2';
     const position = await dbQuery(
       `SELECT COUNT(*) as position 
        FROM senhas 
        WHERE status = 'aguardando' 
        AND (
          prioridade = 'express' OR 
-         (prioridade = ? AND created_at < ?)
+         (prioridade = ${ph1} AND created_at < ${ph2})
        )`,
       [senha[0].prioridade, senha[0].created_at]
     );
