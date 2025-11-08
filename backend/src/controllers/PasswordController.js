@@ -587,6 +587,8 @@ const getQueuePosition = async (senhaId) => {
     const phId = config.database.type === 'sqlite' ? '?' : '$1';
     let createdAt = null;
     let prioridadeVal = null;
+    const cols = await getSenhasColumns();
+    const hasStatus = cols.includes('status');
 
     // Tentar obter created_at e prioridade (se existir)
     try {
@@ -613,8 +615,9 @@ const getQueuePosition = async (senhaId) => {
     // Se não houver coluna prioridade, calcular posição apenas por created_at
     if (prioridadeVal === null || prioridadeVal === undefined) {
       const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
+      const whereStatus = hasStatus ? "status = 'aguardando' AND " : '';
       const result = await dbQuery(
-        `SELECT COUNT(*) as position FROM senhas WHERE status = 'aguardando' AND created_at < ${ph1}`,
+        `SELECT COUNT(*) as position FROM senhas WHERE ${whereStatus} created_at < ${ph1}`,
         [createdAt]
       );
       const rows = getRows(result);
@@ -622,15 +625,16 @@ const getQueuePosition = async (senhaId) => {
     } else {
       const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
       const ph2 = config.database.type === 'sqlite' ? '?' : '$2';
+      const whereStatus = hasStatus ? "status = 'aguardando' AND " : '';
+      const prioridadeCond = cols.includes('prioridade') 
+        ? `prioridade = 'express' OR (prioridade = ${ph1} AND created_at < ${ph2})`
+        : `created_at < ${ph2}`;
       const positionResult = await dbQuery(
         `SELECT COUNT(*) as position 
          FROM senhas 
-         WHERE status = 'aguardando' 
-         AND (
-           prioridade = 'express' OR 
-           (prioridade = ${ph1} AND created_at < ${ph2})
-         )`,
-        [prioridadeVal, createdAt]
+         WHERE ${whereStatus}
+         ${prioridadeCond}`,
+        cols.includes('prioridade') ? [prioridadeVal, createdAt] : [createdAt]
       );
       const position = getRows(positionResult);
       return position && position[0] ? Number(position[0].position) + 1 : null;
