@@ -31,6 +31,8 @@ const emitPasswordUpdate = (req, event, data) => {
 // Gerar nova senha
 export const gerarSenha = async (req, res) => {
   try {
+    // Garantir tabela mínima em Postgres
+    await ensureSenhasTablePostgres();
     const { 
       tipo = 'normal', 
       prioridade = false, 
@@ -590,5 +592,31 @@ const getQueuePosition = async (senhaId) => {
   } catch (error) {
     logger.error('Erro ao calcular posição na fila:', error);
     return null;
+  }
+};
+// Garantir tabela 'senhas' em Postgres (mínimo necessário) quando ausente
+const ensureSenhasTablePostgres = async () => {
+  if (config.database.type === 'sqlite') return;
+  try {
+    // Verificar se relação existe
+    const check = await dbQuery(`SELECT to_regclass('public.senhas') AS rel`);
+    const rows = getRows(check);
+    const exists = rows && rows[0] && rows[0].rel;
+    if (exists) return;
+
+    // Criar tabela mínima compatível
+    await dbQuery(`
+      CREATE TABLE IF NOT EXISTS public.senhas (
+        id UUID PRIMARY KEY,
+        numero INTEGER NOT NULL,
+        tipo TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'aguardando',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+  } catch (e) {
+    // Não bloquear fluxo; logar e seguir
+    logger.warn('Falha ao garantir tabela senhas', { error: e.message });
   }
 };
