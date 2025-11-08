@@ -32,10 +32,18 @@ const getSenhasColumns = async () => {
     } else {
       const colsRes = await dbQuery(`
         SELECT column_name FROM information_schema.columns 
-        WHERE table_schema = 'public' AND table_name = 'senhas'
+        WHERE table_schema = current_schema() AND table_name = 'senhas'
       `);
       const rows = getRows(colsRes);
       senhasColumnsCache = rows.map(r => r.column_name || r.COLUMN_NAME).filter(Boolean);
+      // Fallback: tentar inferir por SELECT * se não encontrou nada
+      if (!senhasColumnsCache || senhasColumnsCache.length === 0) {
+        const sample = await dbQuery(`SELECT * FROM senhas LIMIT 1`);
+        const sampleRows = getRows(sample);
+        if (sampleRows && sampleRows[0]) {
+          senhasColumnsCache = Object.keys(sampleRows[0]);
+        }
+      }
     }
   } catch (e) {
     logger.warn('Falha ao obter colunas de senhas', { error: e.message });
