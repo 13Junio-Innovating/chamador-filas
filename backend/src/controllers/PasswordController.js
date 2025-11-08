@@ -20,6 +20,30 @@ const getRows = (result) => {
   return [];
 };
 
+// Cache simples de colunas da tabela 'senhas'
+let senhasColumnsCache = null;
+const getSenhasColumns = async () => {
+  if (senhasColumnsCache) return senhasColumnsCache;
+  try {
+    if (config.database.type === 'sqlite') {
+      const colsRes = await dbQuery(`PRAGMA table_info('senhas')`);
+      const rows = getRows(colsRes);
+      senhasColumnsCache = rows.map(r => r.name || r.COLUMN_NAME).filter(Boolean);
+    } else {
+      const colsRes = await dbQuery(`
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'senhas'
+      `);
+      const rows = getRows(colsRes);
+      senhasColumnsCache = rows.map(r => r.column_name || r.COLUMN_NAME).filter(Boolean);
+    }
+  } catch (e) {
+    logger.warn('Falha ao obter colunas de senhas', { error: e.message });
+    senhasColumnsCache = [];
+  }
+  return senhasColumnsCache;
+};
+
 // Função para emitir eventos via Socket.IO
 const emitPasswordUpdate = (req, event, data) => {
   if (req.io) {
@@ -117,29 +141,49 @@ export const gerarSenha = async (req, res) => {
     const senhaId = uuidv4();
     const agora = new Date().toISOString();
     
-    // Inserir somente campos essenciais, válidos em ambos bancos
-    const insertFields = ['id', 'numero', 'tipo', 'status'];
-    const insertValues = [senhaId, proximoNumero, tipo, 'aguardando'];
-
-    // Construir placeholders conforme o banco
-    let placeholders;
-    if (config.database.type === 'sqlite') {
-      placeholders = insertValues.map(() => '?').join(', ');
-    } else {
-      placeholders = insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
+    // Montar INSERT dinamicamente conforme colunas existentes
+    const availableCols = await getSenhasColumns();
+    const candidateCols = ['id','numero','tipo','status','created_at','updated_at','user_id','servico','tipo_checkin','prioridade_nivel'];
+    const insertFields = candidateCols.filter(c => availableCols.includes(c));
+    const valuesMap = {
+      id: senhaId,
+      numero: proximoNumero,
+      tipo: tipo,
+      status: 'aguardando',
+      created_at: agora,
+      updated_at: agora,
+      user_id: userId,
+      servico: servico,
+      tipo_checkin: req.body?.tipo_checkin || null,
+      prioridade_nivel: req.body?.prioridade_nivel || null
+    };
+    const insertValues = insertFields.map(f => valuesMap[f]);
+    if (insertFields.length === 0) {
+      throw new Error('Nenhuma coluna válida encontrada para inserir em senhas');
     }
-    await dbQuery(
-      `INSERT INTO senhas (${insertFields.join(', ')}) VALUES (${placeholders})`,
-      insertValues
-    );
+    const placeholders = config.database.type === 'sqlite'
+      ? insertValues.map(() => '?').join(', ')
+      : insertValues.map((_, idx) => `$${idx + 1}`).join(', ');
+    await dbQuery(`INSERT INTO senhas (${insertFields.join(', ')}) VALUES (${placeholders})`, insertValues);
     
     // Buscar dados completos da senha criada
-    const phId = config.database.type === 'sqlite' ? '?' : '$1';
-    const novaSenhaResult = await dbQuery(
-      `SELECT * FROM senhas WHERE id = ${phId}`,
-      [senhaId]
-    );
-    const novaSenha = getRows(novaSenhaResult);
+    // Buscar senha criada: tentar por id se coluna existir, senão pegar última criada
+    let novaSenha;
+    try {
+      const cols = await getSenhasColumns();
+      if (cols.includes('id')) {
+        const phId = config.database.type === 'sqlite' ? '?' : '$1';
+        const novaSenhaResult = await dbQuery(`SELECT * FROM senhas WHERE id = ${phId}`, [senhaId]);
+        novaSenha = getRows(novaSenhaResult);
+      } else {
+        const novaSenhaResult = await dbQuery(`SELECT * FROM senhas ORDER BY created_at DESC LIMIT 1`);
+        novaSenha = getRows(novaSenhaResult);
+      }
+    } catch (e) {
+      // fallback simples
+      const novaSenhaResult = await dbQuery(`SELECT * FROM senhas ORDER BY created_at DESC LIMIT 1`);
+      novaSenha = getRows(novaSenhaResult);
+    }
     
     // Emitir evento via Socket.IO
     emitPasswordUpdate(req, 'password-generated', {
