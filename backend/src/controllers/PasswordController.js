@@ -12,6 +12,14 @@ if (config.database.type === 'sqlite') {
 
 const { query: dbQuery, transaction: dbTransaction } = database;
 
+// Normalizar resultado de consultas entre PostgreSQL (result.rows) e SQLite (array direto)
+const getRows = (result) => {
+  if (!result) return [];
+  if (Array.isArray(result)) return result;
+  if (result.rows && Array.isArray(result.rows)) return result.rows;
+  return [];
+};
+
 // Função para emitir eventos via Socket.IO
 const emitPasswordUpdate = (req, event, data) => {
   if (req.io) {
@@ -38,10 +46,11 @@ export const gerarSenha = async (req, res) => {
       const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
       const ph2 = config.database.type === 'sqlite' ? '?' : '$2';
       const ph3 = config.database.type === 'sqlite' ? '?' : '$3';
-      const senhasAtivas = await dbQuery(
+      const senhasAtivasResult = await dbQuery(
         `SELECT COUNT(*) as count FROM senhas WHERE user_id = ${ph1} AND status IN (${ph2}, ${ph3})`,
         [userId, 'aguardando', 'chamando']
       );
+      const senhasAtivas = getRows(senhasAtivasResult);
       
       if (senhasAtivas[0].count >= config.senhas.maxSenhasPorUsuario) {
         return res.status(429).json({
@@ -53,11 +62,11 @@ export const gerarSenha = async (req, res) => {
     
     // Obter próximo número da senha
     const phDate = config.database.type === 'sqlite' ? '?' : '$1';
-    const ultimaSenha = await dbQuery(
+    const ultimaSenhaResult = await dbQuery(
       `SELECT numero FROM senhas WHERE DATE(created_at) = DATE(${phDate}) ORDER BY numero DESC LIMIT 1`,
       [new Date().toISOString().split('T')[0]]
     );
-    
+    const ultimaSenha = getRows(ultimaSenhaResult);
     const proximoNumero = ultimaSenha.length > 0 ? ultimaSenha[0].numero + 1 : config.senhas.numeroInicialSenha;
     
     // Determinar prefixo baseado no tipo composto ou tipo legado
@@ -162,13 +171,14 @@ export const gerarSenha = async (req, res) => {
     
     // Buscar dados completos da senha criada
     const phId = config.database.type === 'sqlite' ? '?' : '$1';
-    const novaSenha = await dbQuery(
+    const novaSenhaResult = await dbQuery(
       `SELECT s.*, u.nome as user_name 
        FROM senhas s 
        LEFT JOIN usuarios u ON s.user_id = u.id 
        WHERE s.id = ${phId}`,
       [senhaId]
     );
+    const novaSenha = getRows(novaSenhaResult);
     
     // Emitir evento via Socket.IO
     emitPasswordUpdate(req, 'password-generated', {
@@ -568,16 +578,16 @@ export const obterHistorico = async (req, res) => {
 const getQueuePosition = async (senhaId) => {
   try {
     const phId = config.database.type === 'sqlite' ? '?' : '$1';
-    const senha = await dbQuery(
+    const senhaResult = await dbQuery(
       `SELECT created_at, prioridade FROM senhas WHERE id = ${phId}`,
       [senhaId]
     );
-    
+    const senha = getRows(senhaResult);
     if (!senha || senha.length === 0 || !senha[0]) return null;
     
     const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
     const ph2 = config.database.type === 'sqlite' ? '?' : '$2';
-    const position = await dbQuery(
+    const positionResult = await dbQuery(
       `SELECT COUNT(*) as position 
        FROM senhas 
        WHERE status = 'aguardando' 
@@ -587,8 +597,8 @@ const getQueuePosition = async (senhaId) => {
        )`,
       [senha[0].prioridade, senha[0].created_at]
     );
-    
-    return position && position[0] ? position[0].position + 1 : null;
+    const position = getRows(positionResult);
+    return position && position[0] ? Number(position[0].position) + 1 : null;
   } catch (error) {
     logger.error('Erro ao calcular posição na fila:', error);
     return null;
