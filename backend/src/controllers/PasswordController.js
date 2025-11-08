@@ -108,61 +108,9 @@ export const gerarSenha = async (req, res) => {
     const senhaId = uuidv4();
     const agora = new Date().toISOString();
     
-    // Detectar colunas disponíveis na tabela `senhas` para evitar erros em diferentes bancos
-    let senhasColumns = [];
-    try {
-      // Tentar via Information Schema (PostgreSQL)
-      const colsPg = await dbQuery(
-        "SELECT column_name as name FROM information_schema.columns WHERE table_name = 'senhas'"
-      );
-      if (Array.isArray(colsPg) && colsPg.length && colsPg[0].name) {
-        senhasColumns = colsPg.map((c) => c.name);
-      } else if (colsPg?.rows) {
-        senhasColumns = colsPg.rows.map((r) => r.name || r.column_name).filter(Boolean);
-      }
-    } catch (e) {
-      // Fallback para SQLite
-      try {
-        const colsSqlite = await dbQuery('PRAGMA table_info(senhas)');
-        if (colsSqlite?.rows) {
-          senhasColumns = colsSqlite.rows.map((r) => r.name).filter(Boolean);
-        }
-      } catch (_) {
-        // Ignorar
-      }
-    }
-
-    // Montar inserção dinamicamente com base nas colunas existentes
-    const insertFields = [];
-    const insertValues = [];
-
-    const pushIfExists = (col, value) => {
-      if (senhasColumns.length === 0 || senhasColumns.includes(col)) {
-        insertFields.push(col);
-        insertValues.push(value);
-      }
-    };
-
-    pushIfExists('id', senhaId);
-    pushIfExists('numero', proximoNumero);
-    pushIfExists('tipo', tipo);
-    pushIfExists('status', 'aguardando');
-    pushIfExists('created_at', agora);
-    pushIfExists('updated_at', agora);
-    
-    // Campos opcionais dependentes do schema
-    pushIfExists('prefixo', prefixo);
-    // Mapear prioridade: quando true, usar 'express'; caso contrário, 'comum'
-    pushIfExists('prioridade', prioridade ? 'express' : 'comum');
-    pushIfExists('user_id', userId);
-    pushIfExists('tipo_checkin', tipo_checkin);
-    pushIfExists('prioridade_nivel', prioridade_nivel);
-    pushIfExists('senha_completa', senhaCompleta);
-
-    // Garantir que há pelo menos os campos essenciais
-    if (!insertFields.includes('id') || !insertFields.includes('numero') || !insertFields.includes('tipo')) {
-      throw new Error('Estrutura da tabela `senhas` incompatível: campos essenciais ausentes');
-    }
+    // Inserir somente campos essenciais, válidos em ambos bancos
+    const insertFields = ['id', 'numero', 'tipo', 'status'];
+    const insertValues = [senhaId, proximoNumero, tipo, 'aguardando'];
 
     // Construir placeholders conforme o banco
     let placeholders;
