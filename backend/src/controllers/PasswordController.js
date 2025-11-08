@@ -62,19 +62,26 @@ export const gerarSenha = async (req, res) => {
     
     // Obter próximo número da senha (ajuste de cláusula de data conforme banco)
     const dateParam = new Date().toISOString().split('T')[0];
-    let ultimaSenhaSql, ultimaSenhaParams;
-    if (config.database.type === 'sqlite') {
-      const phDate = '?';
-      ultimaSenhaSql = `SELECT numero FROM senhas WHERE DATE(created_at) = DATE(${phDate}) ORDER BY numero DESC LIMIT 1`;
-      ultimaSenhaParams = [dateParam];
-    } else {
-      const phDate = '$1';
-      ultimaSenhaSql = `SELECT numero FROM senhas WHERE CAST(created_at AS DATE) = CAST(${phDate} AS DATE) ORDER BY numero DESC LIMIT 1`;
-      ultimaSenhaParams = [dateParam];
+    let proximoNumero = config.senhas.numeroInicialSenha;
+    try {
+      let maxSql, maxParams;
+      if (config.database.type === 'sqlite') {
+        const phDate = '?';
+        maxSql = `SELECT COALESCE(MAX(numero), 0) as max_num FROM senhas WHERE DATE(created_at) = DATE(${phDate})`;
+        maxParams = [dateParam];
+      } else {
+        const phDate = '$1';
+        maxSql = `SELECT COALESCE(MAX(numero), 0) as max_num FROM senhas WHERE CAST(created_at AS DATE) = CAST(${phDate} AS DATE)`;
+        maxParams = [dateParam];
+      }
+      const maxResult = await dbQuery(maxSql, maxParams);
+      const rows = getRows(maxResult);
+      proximoNumero = (rows.length ? Number(rows[0].max_num) : 0) + 1;
+    } catch (e) {
+      // Se falhar, usar número inicial configurado
+      logger.warn('Falha ao calcular próximo número, usando padrão', { error: e.message });
+      proximoNumero = config.senhas.numeroInicialSenha;
     }
-    const ultimaSenhaResult = await dbQuery(ultimaSenhaSql, ultimaSenhaParams);
-    const ultimaSenha = getRows(ultimaSenhaResult);
-    const proximoNumero = ultimaSenha.length > 0 ? ultimaSenha[0].numero + 1 : config.senhas.numeroInicialSenha;
     
     // Determinar prefixo baseado no tipo composto ou tipo legado
     let prefixo = config.senhas.prefixoSenha;
