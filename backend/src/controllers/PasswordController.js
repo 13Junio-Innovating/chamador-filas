@@ -537,27 +537,56 @@ export const obterHistorico = async (req, res) => {
 const getQueuePosition = async (senhaId) => {
   try {
     const phId = config.database.type === 'sqlite' ? '?' : '$1';
-    const senhaResult = await dbQuery(
-      `SELECT created_at, prioridade FROM senhas WHERE id = ${phId}`,
-      [senhaId]
-    );
-    const senha = getRows(senhaResult);
-    if (!senha || senha.length === 0 || !senha[0]) return null;
+    let createdAt = null;
+    let prioridadeVal = null;
+
+    // Tentar obter created_at e prioridade (se existir)
+    try {
+      const senhaResult = await dbQuery(
+        `SELECT created_at, prioridade FROM senhas WHERE id = ${phId}`,
+        [senhaId]
+      );
+      const senha = getRows(senhaResult);
+      if (!senha || senha.length === 0 || !senha[0]) return null;
+      createdAt = senha[0].created_at;
+      prioridadeVal = senha[0].prioridade;
+    } catch (e) {
+      // Fallback: buscar apenas created_at se coluna prioridade não existir
+      const senhaResult = await dbQuery(
+        `SELECT created_at FROM senhas WHERE id = ${phId}`,
+        [senhaId]
+      );
+      const senha = getRows(senhaResult);
+      if (!senha || senha.length === 0 || !senha[0]) return null;
+      createdAt = senha[0].created_at;
+      prioridadeVal = null;
+    }
     
-    const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
-    const ph2 = config.database.type === 'sqlite' ? '?' : '$2';
-    const positionResult = await dbQuery(
-      `SELECT COUNT(*) as position 
-       FROM senhas 
-       WHERE status = 'aguardando' 
-       AND (
-         prioridade = 'express' OR 
-         (prioridade = ${ph1} AND created_at < ${ph2})
-       )`,
-      [senha[0].prioridade, senha[0].created_at]
-    );
-    const position = getRows(positionResult);
-    return position && position[0] ? Number(position[0].position) + 1 : null;
+    // Se não houver coluna prioridade, calcular posição apenas por created_at
+    if (prioridadeVal === null || prioridadeVal === undefined) {
+      const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
+      const result = await dbQuery(
+        `SELECT COUNT(*) as position FROM senhas WHERE status = 'aguardando' AND created_at < ${ph1}`,
+        [createdAt]
+      );
+      const rows = getRows(result);
+      return rows && rows[0] ? Number(rows[0].position) + 1 : null;
+    } else {
+      const ph1 = config.database.type === 'sqlite' ? '?' : '$1';
+      const ph2 = config.database.type === 'sqlite' ? '?' : '$2';
+      const positionResult = await dbQuery(
+        `SELECT COUNT(*) as position 
+         FROM senhas 
+         WHERE status = 'aguardando' 
+         AND (
+           prioridade = 'express' OR 
+           (prioridade = ${ph1} AND created_at < ${ph2})
+         )`,
+        [prioridadeVal, createdAt]
+      );
+      const position = getRows(positionResult);
+      return position && position[0] ? Number(position[0].position) + 1 : null;
+    }
   } catch (error) {
     logger.error('Erro ao calcular posição na fila:', error);
     return null;
