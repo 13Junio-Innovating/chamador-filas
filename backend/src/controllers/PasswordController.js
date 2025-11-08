@@ -179,10 +179,7 @@ export const gerarSenha = async (req, res) => {
     // Buscar dados completos da senha criada
     const phId = config.database.type === 'sqlite' ? '?' : '$1';
     const novaSenhaResult = await dbQuery(
-      `SELECT s.*, u.nome as user_name 
-       FROM senhas s 
-       LEFT JOIN usuarios u ON s.user_id = u.id 
-       WHERE s.id = ${phId}`,
+      `SELECT * FROM senhas WHERE id = ${phId}`,
       [senhaId]
     );
     const novaSenha = getRows(novaSenhaResult);
