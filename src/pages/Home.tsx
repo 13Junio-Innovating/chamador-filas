@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { apiService } from "@/lib/api";
 import { Star, Users, Home as HomeIcon, LogIn, LogOut, Printer, Check } from "lucide-react";
 import FluxoPerguntas from "@/components/FluxoPerguntas";
 
@@ -41,45 +42,79 @@ export default function Home() {
 
       console.log('Tipo legado mapeado:', tipoLegado);
 
-      // Obter próximo número
-      const { data: numeroData, error: numeroError } = await supabase
-        .rpc('get_proximo_numero_senha', { tipo_senha: tipoLegado });
+      try {
+        // Obter próximo número via Supabase
+        const { data: numeroData, error: numeroError } = await supabase
+          .rpc('get_proximo_numero_senha', { tipo_senha: tipoLegado });
 
-      if (numeroError) throw numeroError;
-      if (typeof numeroData !== "number") throw new Error("Número de senha inválido.");
+        if (numeroError) throw numeroError;
+        if (typeof numeroData !== "number") throw new Error("Número de senha inválido.");
 
-      console.log('Número obtido:', numeroData);
+        console.log('Número obtido:', numeroData);
 
-      // Inserir senha com nova estrutura
-      const { data, error } = await supabase
-        .from('senhas')
-        .insert([{ 
-          numero: numeroData, 
-          tipo: tipoLegado, 
-          status: 'aguardando' 
-        }])
-        .select()
-        .single();
+        // Inserir senha com nova estrutura
+        const { data, error } = await supabase
+          .from('senhas')
+          .insert([{ 
+            numero: numeroData, 
+            tipo: tipoLegado, 
+            status: 'aguardando' 
+          }])
+          .select()
+          .single();
 
-      if (error) throw error;
+        if (error) throw error;
 
-      console.log('Senha inserida:', data);
+        console.log('Senha inserida:', data);
 
-      setNovaSenha({
-        id: data?.id as string,
-        numero: data?.numero as number,
-        tipo: data?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
-        tipoCheckin: undefined,
-        prioridadeNivel: undefined,
-        status: data?.status as string,
-      });
-      
-      setFluxoAtivo(null);
-      
-      toast({
-        title: "Senha gerada!",
-        description: `Sua senha foi gerada com sucesso.`,
-      });
+        setNovaSenha({
+          id: data?.id as string,
+          numero: data?.numero as number,
+          tipo: data?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
+          tipoCheckin: undefined,
+          prioridadeNivel: undefined,
+          status: data?.status as string,
+        });
+
+        setFluxoAtivo(null);
+
+        toast({
+          title: "Senha gerada!",
+          description: `Sua senha foi gerada com sucesso.`,
+        });
+      } catch (supabaseError: any) {
+        console.warn('Supabase falhou, tentando backend:', supabaseError);
+        // Mapear tipo base aceito pelo backend
+        const tipoBase: 'normal' | 'prioritario' | 'express' =
+          tipoCheckin === 'express' ? 'express' : prioridadeNivel === 'prioritario' ? 'prioritario' : 'normal';
+
+        const response = await apiService.generatePassword({
+          tipo: tipoBase,
+          tipo_checkin: tipoCheckin as 'proprietario' | 'express' | 'normal',
+          prioridade_nivel: prioridadeNivel as 'prioritario' | 'comum',
+        });
+
+        if (!response.ok || !response.data) {
+          const msg = response.error || 'Falha ao gerar a senha no backend';
+          throw new Error(msg);
+        }
+
+        const generated: any = response.data;
+        const senhaParcial = {
+          numero: (generated.password?.numero ?? 0) as number,
+          tipo: tipoLegado,
+          status: 'aguardando',
+        } as Partial<NovaSenha>;
+
+        setNovaSenha(senhaParcial as NovaSenha);
+
+        setFluxoAtivo(null);
+
+        toast({
+          title: 'Senha gerada!',
+          description: `Sua senha foi gerada com sucesso.`,
+        });
+      }
     } catch (error: unknown) {
       console.error("Erro ao gerar senha:", error);
       let description = "";
@@ -103,40 +138,67 @@ export default function Home() {
   async function gerarSenha(tipo: "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express") {
     setIsGenerating(true);
     try {
-      // Obter próximo número
-      const { data: numeroData, error: numeroError } = await supabase
-        .rpc('get_proximo_numero_senha', { tipo_senha: tipo });
+      try {
+        // Obter próximo número
+        const { data: numeroData, error: numeroError } = await supabase
+          .rpc('get_proximo_numero_senha', { tipo_senha: tipo });
 
-      if (numeroError) throw numeroError;
-      if (typeof numeroData !== "number") throw new Error("Número de senha inválido.");
+        if (numeroError) throw numeroError;
+        if (typeof numeroData !== "number") throw new Error("Número de senha inválido.");
 
-      // Inserir senha com estrutura simplificada
-      const { data, error } = await supabase
-        .from('senhas')
-        .insert([{ 
-          numero: numeroData, 
+        // Inserir senha com estrutura simplificada
+        const { data, error } = await supabase
+          .from('senhas')
+          .insert([{ 
+            numero: numeroData, 
+            tipo: tipo,
+            status: 'aguardando' 
+          }])
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        console.log('Senha inserida:', data);
+
+        setNovaSenha({
+          id: data?.id as string,
+          numero: data?.numero as number,
+          tipo: data?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
+          tipoCheckin: undefined,
+          prioridadeNivel: undefined,
+          status: data?.status as string,
+        });
+        toast({
+          title: "Senha gerada!",
+          description: `Sua senha foi gerada com sucesso.`,
+        });
+      } catch (supabaseError: any) {
+        console.warn('Supabase falhou, tentando backend:', supabaseError);
+        // Mapear tipos não suportados para bem aceitos pelo backend
+        let tipoBase: 'normal' | 'prioritario' | 'express' = 'normal';
+        if (tipo === 'preferencial' || tipo === 'prioritario') tipoBase = 'prioritario';
+        else if (tipo === 'express') tipoBase = 'express';
+
+        const response = await apiService.generatePassword({ tipo: tipoBase });
+        if (!response.ok || !response.data) {
+          const msg = response.error || 'Falha ao gerar a senha no backend';
+          throw new Error(msg);
+        }
+
+        const generated: any = response.data;
+        const senhaParcial = {
+          numero: (generated.password?.numero ?? 0) as number,
           tipo: tipo,
-          status: 'aguardando' 
-        }])
-        .select()
-        .single();
+          status: 'aguardando',
+        } as Partial<NovaSenha>;
 
-      if (error) throw error;
-
-      console.log('Senha inserida:', data);
-
-      setNovaSenha({
-        id: data?.id as string,
-        numero: data?.numero as number,
-        tipo: data?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
-        tipoCheckin: undefined,
-        prioridadeNivel: undefined,
-        status: data?.status as string,
-      });
-      toast({
-        title: "Senha gerada!",
-        description: `Sua senha foi gerada com sucesso.`,
-      });
+        setNovaSenha(senhaParcial as NovaSenha);
+        toast({
+          title: 'Senha gerada!',
+          description: `Sua senha foi gerada com sucesso.`,
+        });
+      }
     } catch (error: unknown) {
       console.error("Erro ao gerar senha:", error);
       let description = "";

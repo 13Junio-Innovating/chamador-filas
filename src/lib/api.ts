@@ -288,10 +288,20 @@ class ApiService {
   }
 
   // Password generation methods
-  async generatePassword(tipo: 'normal' | 'prioritario' | 'express'): Promise<ApiResponse<GeneratePasswordResponse>> {
+  // Overload to support simple or composite payload
+  async generatePassword(tipo: 'normal' | 'prioritario' | 'express'): Promise<ApiResponse<GeneratePasswordResponse>>;
+  async generatePassword(payload: {
+    tipo: 'normal' | 'prioritario' | 'express';
+    prioridade?: 'comum' | 'express';
+    tipo_checkin?: 'proprietario' | 'express' | 'normal';
+    prioridade_nivel?: 'prioritario' | 'comum';
+    observacoes?: string;
+  }): Promise<ApiResponse<GeneratePasswordResponse>>;
+  async generatePassword(arg: any): Promise<ApiResponse<GeneratePasswordResponse>> {
+    const payload = typeof arg === 'string' ? { tipo: arg } : arg;
     return this.request<GeneratePasswordResponse>('/api/passwords/generate', {
       method: 'POST',
-      body: JSON.stringify({ tipo }),
+      body: JSON.stringify(payload),
     });
   }
 
