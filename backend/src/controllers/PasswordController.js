@@ -160,7 +160,9 @@ export const gerarSenha = async (req, res) => {
     logger.error('Erro ao gerar senha:', error);
     res.status(500).json({
       success: false,
-      message: 'Erro interno do servidor'
+      message: 'Erro interno do servidor',
+      code: 'GENERATION_FAILED',
+      error: error?.message || 'unknown'
     });
   }
 };
