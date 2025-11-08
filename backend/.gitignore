@@ -145,3 +145,6 @@ pm2-logs/
 # Database dumps
 *.backup
 *.sql.gz
+
+# Local SQLite database (não versionar)
+database.sqlite
