@@ -15,7 +15,8 @@ import {
   atenderSenha,
   obterDetalhes,
   cancelarSenha,
-  obterHistorico
+  obterHistorico,
+  debugSenhasColumns
 } from '../controllers/PasswordController.js';
 
 const router = express.Router();
@@ -43,6 +44,13 @@ router.get('/queue',
   validatePagination,
   obterFila
 );
+
+/**
+ * @route   GET /api/passwords/debug/columns
+ * @desc    Expor colunas detectadas da tabela 'senhas' (diagnóstico)
+ * @access  Public (temporário para debug)
+ */
+router.get('/debug/columns', debugSenhasColumns);
 
 /**
  * @route   GET /api/passwords/history

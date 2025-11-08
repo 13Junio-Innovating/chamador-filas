@@ -219,6 +219,16 @@ export const gerarSenha = async (req, res) => {
   }
 };
 
+// Debug: expor colunas da tabela 'senhas' (somente leitura)
+export const debugSenhasColumns = async (req, res) => {
+  try {
+    const cols = await getSenhasColumns();
+    res.json({ success: true, data: { columns: cols } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Erro ao obter colunas', error: e.message });
+  }
+};
+
 // Obter fila de senhas
 export const obterFila = async (req, res) => {
   try {
