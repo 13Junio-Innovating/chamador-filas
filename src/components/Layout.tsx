@@ -80,14 +80,7 @@ export default function Layout({ children, showAdminLink = true, showPainelLink 
                     </Button>
                   </Link>
                 )}
-                {showRelatoriosLink && (
-                  <Link to="/relatorios-backend">
-                    <Button variant="ghost" size="sm">
-                      <Database className="w-4 h-4 mr-2" />
-                      Relatórios API
-                    </Button>
-                  </Link>
-                )}
+                {/* Link para /relatorios-backend removido; rota não existe mais */}
               </div>
             </div>
             <div className="flex items-center gap-2">

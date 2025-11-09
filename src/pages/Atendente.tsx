@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import SenhaCard from "@/components/SenhaCard";
 import Layout from "@/components/Layout";
 import { Phone, CheckCircle, RotateCcw, X, Users, Star } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+// Removed Radix Select in favor of native select for stability
 import type { Tables } from "@/integrations/supabase/types";
 
 export default function Atendente() {
@@ -284,23 +284,24 @@ export default function Atendente() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <Label htmlFor="guiche">Guichê</Label>
-              <Select value={guiche ?? undefined} onValueChange={(value) => setGuiche(value)}>
-                <SelectTrigger id="guiche" className="w-full">
-                  <SelectValue placeholder="Selecione" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">1</SelectItem>
-                  <SelectItem value="2">2</SelectItem>
-                  <SelectItem value="3">3</SelectItem>
-                  <SelectItem value="4">4</SelectItem>
-                  <SelectItem value="5">5</SelectItem>
-                  <SelectItem value="6">6</SelectItem>
-                  <SelectItem value="7">7</SelectItem>
-                  <SelectItem value="8">8</SelectItem>
-                  <SelectItem value="9">9</SelectItem>
-                  <SelectItem value="10">10</SelectItem>
-                </SelectContent>
-              </Select>
+              <select
+                id="guiche"
+                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                value={guiche ?? ""}
+                onChange={(e) => setGuiche(e.target.value || null)}
+              >
+                <option value="" disabled>Selecione</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+              </select>
             </div>
             <div>
               <Label htmlFor="atendente">Atendente</Label>

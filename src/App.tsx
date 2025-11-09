@@ -11,7 +11,6 @@ import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 import Painel from "./pages/Painel";
 import Relatorios from "./pages/Relatorios";
-import RelatoriosBackend from "./pages/RelatoriosBackend";
 import NotFound from "./pages/NotFound";
 import Register from "./pages/Register";
 import ResetPassword from "./pages/ResetPassword";
@@ -68,7 +67,9 @@ const App = () => (
             <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
             <Route path="/atendente" element={<ProtectedRoute><Atendente /></ProtectedRoute>} />
             <Route path="/relatorios" element={<ProtectedRoute><Relatorios /></ProtectedRoute>} />
-            <Route path="/relatorios-backend" element={<ProtectedRoute><RelatoriosBackend /></ProtectedRoute>} />
+            {/* Redireciona antiga rota para Relatórios */}
+            <Route path="/relatorios-backend" element={<Navigate to="/relatorios" replace />} />
+        {/* Rota removida: RelatoriosBackend dependia do backend Railway */}
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

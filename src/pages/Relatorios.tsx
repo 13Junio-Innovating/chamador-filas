@@ -30,6 +30,7 @@ interface Senha {
   hora_atendimento: string | null;
   guiche: string | null;
   atendente: string | null;
+  numero_apartamento?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -90,7 +91,24 @@ export default function Relatorios() {
 
       if (error) throw error;
 
-      setSenhas(data || []);
+      const rows = (data || []) as any[];
+      const normalizadas: Senha[] = rows.map((r) => ({
+        id: r.id,
+        numero: r.numero,
+        tipo: r.tipo as SenhaTipo,
+        status: r.status as SenhaStatus,
+        hora_retirada: r.hora_retirada,
+        hora_chamada: r.hora_chamada,
+        hora_atendimento: r.hora_atendimento,
+        guiche: r.guiche,
+        // Usa o melhor campo disponível para 'atendente'
+        atendente: (r.atendente ?? r.atendente_nome ?? r.usuario_nome ?? null) as string | null,
+        numero_apartamento: (r.numero_apartamento ?? null) as string | null,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      }));
+
+      setSenhas(normalizadas);
     } catch (e: unknown) {
       toast({
         title: "Erro ao carregar",
@@ -174,7 +192,7 @@ export default function Relatorios() {
     }
 
     const sep = ";";
-    const header = `sep=${sep}\r\nNumero;Tipo;Status;Retirada;Chamada;Atendimento;Guiche;Atendente`;
+    const header = `sep=${sep}\r\nNumero;Tipo;Status;Retirada;Chamada;Atendimento;Guiche;Atendente;Apartamento`;
     const rows = senhas.map(s => {
       const numeroText = `="${numero(s)}"`;
       const cols = [
@@ -185,7 +203,8 @@ export default function Relatorios() {
         fmt(s.hora_chamada),
         fmt(s.hora_atendimento),
         s.guiche || "",
-        s.atendente || ""
+        s.atendente || "",
+        s.numero_apartamento || "",
       ];
       return cols.map(v => `"${String(v).replace(/"/g, '""')}"`).join(sep);
     });
@@ -223,6 +242,7 @@ export default function Relatorios() {
       "Atendimento",
       "Guiche",
       "Atendente",
+      "Apartamento",
     ];
 
     const tipoNome = (tipo: string) => {
@@ -245,6 +265,7 @@ export default function Relatorios() {
       fmt(s.hora_atendimento),
       s.guiche || "",
       s.atendente || "",
+      s.numero_apartamento || "",
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
@@ -255,7 +276,7 @@ export default function Relatorios() {
       alignment: { horizontal: "center" as const, vertical: "center" as const },
     };
 
-    const colWidths = [8, 14, 12, 19, 19, 19, 10, 18];
+    const colWidths = [8, 14, 12, 19, 19, 19, 10, 18, 12];
     ws["!cols"] = colWidths.map((wch) => ({ wch }));
 
     const range = XLSX.utils.decode_range(ws["!ref"] as string);

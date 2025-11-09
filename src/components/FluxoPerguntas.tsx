@@ -5,16 +5,26 @@ import { ArrowLeft, Users, Star, Home as HomeIcon, Zap } from "lucide-react";
 
 interface FluxoPerguntasProps {
   tipoInicial: "preferencial" | "proprietario" | "check-in" | "express";
-  onTipoSelecionado: (tipoCheckin: string, prioridadeNivel: string) => void;
+  onTipoSelecionado: (tipoCheckin: string, prioridadeNivel: string, numeroApartamento?: string) => void;
   onVoltar: () => void;
   isGenerating: boolean;
 }
 
-type Etapa = 'prioridade' | 'checkin_tipo';
+type Etapa =
+  | 'prioridade'
+  | 'checkin_tipo'
+  | 'eh_proprietario'
+  | 'numero_apartamento'
+  | 'fez_web_checkin'
+  | 'assinou_efnrh';
 
 export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVoltar, isGenerating }: FluxoPerguntasProps) {
-  const [etapaAtual, setEtapaAtual] = useState<Etapa>('prioridade');
+  const [etapaAtual, setEtapaAtual] = useState<Etapa>(tipoInicial === 'check-in' ? 'eh_proprietario' : 'prioridade');
   const [prioridadeEscolhida, setPrioridadeEscolhida] = useState<string>('comum');
+  const [isProprietario, setIsProprietario] = useState<boolean | null>(null);
+  const [numeroApartamento, setNumeroApartamento] = useState<string>("");
+  const [fezWebCheckin, setFezWebCheckin] = useState<boolean | null>(null);
+  const [assinouEFNRH, setAssinouEFNRH] = useState<boolean | null>(null);
 
   const handleResposta = (resposta: boolean) => {
     console.log('handleResposta chamada com:', { resposta, etapaAtual, tipoInicial });
@@ -31,20 +41,55 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
         onTipoSelecionado('normal', 'prioritario');
       } else if (tipoInicial === 'proprietario') {
         console.log('Chamando onTipoSelecionado para proprietario');
-        onTipoSelecionado('proprietario', prioridadeNivel);
+        onTipoSelecionado('proprietario', prioridadeNivel, numeroApartamento || undefined);
       } else if (tipoInicial === 'express') {
         console.log('Chamando onTipoSelecionado para express');
         onTipoSelecionado('express', prioridadeNivel);
       } else if (tipoInicial === 'check-in') {
-        // Para check-in, perguntar sobre web check-in
-        console.log('Mudando para etapa checkin_tipo');
-        setEtapaAtual('checkin_tipo');
+        // Decidir tipo de check-in com base nas respostas anteriores
+        if (isProprietario) {
+          console.log('Fluxo check-in: proprietario → gerar');
+          onTipoSelecionado('proprietario', prioridadeNivel, numeroApartamento || undefined);
+        } else if (fezWebCheckin) {
+          if (assinouEFNRH) {
+            console.log('Fluxo check-in: web + E-FNRH → express');
+            onTipoSelecionado('express', prioridadeNivel);
+          } else {
+            console.log('Fluxo check-in: web sem E-FNRH → normal');
+            onTipoSelecionado('normal', prioridadeNivel);
+          }
+        } else {
+          console.log('Fluxo check-in: sem web → normal');
+          onTipoSelecionado('normal', prioridadeNivel);
+        }
       }
     } else if (etapaAtual === 'checkin_tipo') {
-      // Resposta sobre web check-in
+      // Compatibilidade (não usado no novo fluxo completo)
       const tipoCheckin = resposta ? 'express' : 'normal';
-      console.log('Chamando onTipoSelecionado para checkin:', { tipoCheckin, prioridadeEscolhida });
+      console.log('Chamando onTipoSelecionado (compat) para checkin:', { tipoCheckin, prioridadeEscolhida });
       onTipoSelecionado(tipoCheckin, prioridadeEscolhida);
+    } else if (etapaAtual === 'eh_proprietario') {
+      setIsProprietario(resposta);
+      if (resposta) {
+        console.log('Check-in: é proprietario → perguntar número do apartamento');
+        setEtapaAtual('numero_apartamento');
+      } else {
+        console.log('Check-in: não é proprietario → perguntar web check-in');
+        setEtapaAtual('fez_web_checkin');
+      }
+    } else if (etapaAtual === 'fez_web_checkin') {
+      setFezWebCheckin(resposta);
+      if (resposta) {
+        console.log('Check-in: fez web check-in → perguntar E-FNRH');
+        setEtapaAtual('assinou_efnrh');
+      } else {
+        console.log('Check-in: não fez web check-in → perguntar prioridade');
+        setEtapaAtual('prioridade');
+      }
+    } else if (etapaAtual === 'assinou_efnrh') {
+      setAssinouEFNRH(resposta);
+      console.log('Check-in: respondeu E-FNRH → perguntar prioridade');
+      setEtapaAtual('prioridade');
     }
   };
 
@@ -57,6 +102,14 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
       }
     } else if (etapaAtual === 'checkin_tipo') {
       return "Fez o Web Check-in?";
+    } else if (etapaAtual === 'eh_proprietario') {
+      return "É proprietário?";
+    } else if (etapaAtual === 'numero_apartamento') {
+      return "Informe o número do seu apartamento";
+    } else if (etapaAtual === 'fez_web_checkin') {
+      return "Fez o Web Check-in?";
+    } else if (etapaAtual === 'assinou_efnrh') {
+      return "Assinou a E-FNRH?";
     }
     return "";
   };
@@ -68,6 +121,16 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
         { valor: false, icone: Users, texto: "Não" }
       ];
     } else if (etapaAtual === 'checkin_tipo') {
+      return [
+        { valor: true, icone: Zap, texto: "Sim" },
+        { valor: false, icone: Users, texto: "Não" }
+      ];
+    } else if (etapaAtual === 'eh_proprietario') {
+      return [
+        { valor: true, icone: HomeIcon, texto: "Sim" },
+        { valor: false, icone: Users, texto: "Não" }
+      ];
+    } else if (etapaAtual === 'fez_web_checkin' || etapaAtual === 'assinou_efnrh') {
       return [
         { valor: true, icone: Zap, texto: "Sim" },
         { valor: false, icone: Users, texto: "Não" }
@@ -93,20 +156,63 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
 
         <div className="text-center">
           <h2 className="text-2xl font-bold mb-8 text-white">{getTituloPergunta()}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {getOpcoes().map((opcao) => (
-              <Button
-                key={opcao.texto}
-                onClick={() => handleResposta(opcao.valor)}
-                disabled={isGenerating}
-                className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
-                size="lg"
-              >
-                <opcao.icone className="w-10 h-10" />
-                {opcao.texto}
-              </Button>
-            ))}
-          </div>
+          {etapaAtual === 'numero_apartamento' ? (
+            <div className="flex flex-col items-center gap-6" key={etapaAtual}>
+              <div className="text-4xl font-bold text-white tracking-widest">
+                {numeroApartamento || "—"}
+              </div>
+              <div className="grid grid-cols-3 gap-4 w-full max-w-sm">
+                {["1","2","3","4","5","6","7","8","9","0"].map((num) => (
+                  <Button
+                    key={`num-${num}`}
+                    onClick={() => setNumeroApartamento((prev) => (prev + num).slice(0, 6))}
+                    disabled={isGenerating}
+                    className="h-16 text-xl bg-white/10 hover:bg-white/20 text-white border-white/20"
+                  >
+                    {num}
+                  </Button>
+                ))}
+              </div>
+              <div className="flex gap-4">
+                <Button
+                  onClick={() => setNumeroApartamento((prev) => prev.slice(0, -1))}
+                  disabled={isGenerating || !numeroApartamento}
+                  className="h-12 text-lg bg-white/10 hover:bg-white/20 text-white border-white/20"
+                >
+                  Apagar
+                </Button>
+                <Button
+                  onClick={() => setNumeroApartamento("")}
+                  disabled={isGenerating || !numeroApartamento}
+                  className="h-12 text-lg bg-white/10 hover:bg-white/20 text-white border-white/20"
+                >
+                  Limpar
+                </Button>
+                <Button
+                  onClick={() => setEtapaAtual('prioridade')}
+                  disabled={isGenerating || !numeroApartamento.trim()}
+                  className="h-12 text-lg bg-white/10 hover:bg-white/20 text-white border-white/20"
+                >
+                  Continuar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6" key={etapaAtual}>
+              {getOpcoes().map((opcao) => (
+                <Button
+                  key={`${etapaAtual}-${opcao.texto}`}
+                  onClick={() => handleResposta(opcao.valor)}
+                  disabled={isGenerating}
+                  className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
+                  size="lg"
+                >
+                  <opcao.icone className="w-10 h-10" />
+                  {opcao.texto}
+                </Button>
+              ))}
+            </div>
+          )}
         </div>
       </Card>
     </div>

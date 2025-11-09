@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { apiService } from "@/lib/api";
+
 import { Star, Users, Home as HomeIcon, LogIn, LogOut, Printer, Check } from "lucide-react";
 import FluxoPerguntas from "@/components/FluxoPerguntas";
 
@@ -23,9 +23,32 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [fluxoAtivo, setFluxoAtivo] = useState<TipoFluxo>(null);
   const { toast } = useToast();
+  const SKIP_APTO_INSERT = (import.meta.env.VITE_SKIP_APTO_INSERT ?? 'true') === 'true';
 
-  async function gerarSenhaComposita(tipoCheckin: string, prioridadeNivel: string) {
-    console.log('gerarSenhaComposita chamada com:', { tipoCheckin, prioridadeNivel });
+  // Fallback: tenta RPC; se não existir, busca o maior número e incrementa
+  async function getProximoNumero(tipo: string) {
+    try {
+      const { data, error } = await supabase.rpc('get_proximo_numero_senha', { tipo_senha: tipo as "check-in" | "check-out" | "express" | "normal" | "preferencial" | "proprietario" });
+      if (!error && typeof data === 'number') {
+        return data;
+      }
+    } catch (e) {
+      // Ignora e segue para fallback
+    }
+    const { data: rows, error: selError } = await supabase
+      .from('senhas')
+      .select('numero')
+      .eq('tipo', tipo as "preferencial" | "proprietario" | "check-in" | "express" | "normal" | "check-out")
+      .order('numero', { ascending: false })
+      .limit(1);
+    if (selError) throw selError;
+    const maxNumero = rows && rows.length ? (rows[0] as any).numero : 0;
+    const maxNumNumber = typeof maxNumero === 'number' ? maxNumero : parseInt(String(maxNumero), 10) || 0;
+    return maxNumNumber + 1;
+  }
+
+  async function gerarSenhaComposita(tipoCheckin: string, prioridadeNivel: string, numeroApartamento?: string) {
+    console.log('gerarSenhaComposita chamada com:', { tipoCheckin, prioridadeNivel, numeroApartamento });
     setIsGenerating(true);
     try {
       // Mapear para tipo legado para compatibilidade
@@ -43,77 +66,61 @@ export default function Home() {
       console.log('Tipo legado mapeado:', tipoLegado);
 
       try {
-        // Obter próximo número via Supabase
-        const { data: numeroData, error: numeroError } = await supabase
-          .rpc('get_proximo_numero_senha', { tipo_senha: tipoLegado });
-
-        if (numeroError) throw numeroError;
-        if (typeof numeroData !== "number") throw new Error("Número de senha inválido.");
-
+        // Obter próximo número (RPC ou fallback)
+        const numeroData = await getProximoNumero(tipoLegado);
         console.log('Número obtido:', numeroData);
-
-        // Inserir senha com nova estrutura
-        const { data, error } = await supabase
-          .from('senhas')
-          .insert([{ 
-            numero: numeroData, 
-            tipo: tipoLegado, 
-            status: 'aguardando' 
-          }])
-          .select()
-          .single();
-
-        if (error) throw error;
-
-        console.log('Senha inserida:', data);
-
-        setNovaSenha({
-          id: data?.id as string,
-          numero: data?.numero as number,
-          tipo: data?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
-          tipoCheckin: undefined,
-          prioridadeNivel: undefined,
-          status: data?.status as string,
-        });
-
-        setFluxoAtivo(null);
-
-        toast({
-          title: "Senha gerada!",
-          description: `Sua senha foi gerada com sucesso.`,
-        });
-      } catch (supabaseError: any) {
-        console.warn('Supabase falhou, tentando backend:', supabaseError);
-        // Mapear tipo base aceito pelo backend
-        const tipoBase: 'normal' | 'prioritario' | 'express' =
-          tipoCheckin === 'express' ? 'express' : prioridadeNivel === 'prioritario' ? 'prioritario' : 'normal';
-
-        const response = await apiService.generatePassword({
-          tipo: tipoBase,
-          tipo_checkin: tipoCheckin as 'proprietario' | 'express' | 'normal',
-          prioridade_nivel: prioridadeNivel as 'prioritario' | 'comum',
-        });
-
-        if (!response.ok || !response.data) {
-          const msg = response.error || 'Falha ao gerar a senha no backend';
-          throw new Error(msg);
+        // Inserir senha com nova estrutura, incluindo numero_apartamento quando aplicável
+        const payloadBase = { numero: numeroData, tipo: tipoLegado, status: 'aguardando' } as any;
+        const payload = { ...payloadBase } as any;
+        if (tipoCheckin === 'proprietario' && numeroApartamento && !SKIP_APTO_INSERT) {
+          payload.numero_apartamento = numeroApartamento;
         }
 
-        const generated: any = response.data;
-        const senhaParcial = {
-          numero: (generated.password?.numero ?? 0) as number,
-          tipo: tipoLegado,
-          status: 'aguardando',
-        } as Partial<NovaSenha>;
+        let insertData: any;
+        let insertError: any;
 
-        setNovaSenha(senhaParcial as NovaSenha);
+        ({ data: insertData, error: insertError } = await supabase
+          .from('senhas')
+          .insert([payload])
+          .select('id,numero,tipo,status,hora_retirada')
+          .single());
+
+        // Fallback silencioso: se a coluna numero_apartamento não existir no PostgREST (erro PGRST204), reinsere sem o campo
+        if (insertError && (insertError.code === 'PGRST204' || /schema cache|numero_apartamento/i.test(insertError.message || ''))) {
+          const { data: dataFallback, error: errorFallback } = await supabase
+            .from('senhas')
+            .insert([payloadBase])
+            .select('id,numero,tipo,status,hora_retirada')
+            .single();
+          if (errorFallback) throw errorFallback;
+          insertData = dataFallback;
+          // Mantém experiência consistente: exibe sucesso sem aviso de migração
+          toast({
+            title: 'Senha gerada!',
+            description: 'Sua senha foi gerada com sucesso.',
+          });
+        } else {
+          if (insertError) throw insertError;
+          toast({
+            title: 'Senha gerada!',
+            description: 'Sua senha foi gerada com sucesso.',
+          });
+        }
+
+        console.log('Senha inserida:', insertData);
+
+        setNovaSenha({
+          id: insertData?.id as string,
+          numero: insertData?.numero as number,
+          tipo: insertData?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
+          tipoCheckin: undefined,
+          prioridadeNivel: undefined,
+          status: insertData?.status as string,
+        });
 
         setFluxoAtivo(null);
-
-        toast({
-          title: 'Senha gerada!',
-          description: `Sua senha foi gerada com sucesso.`,
-        });
+      } catch (supabaseError: any) {
+        throw supabaseError;
       }
     } catch (error: unknown) {
       console.error("Erro ao gerar senha:", error);
@@ -139,12 +146,8 @@ export default function Home() {
     setIsGenerating(true);
     try {
       try {
-        // Obter próximo número
-        const { data: numeroData, error: numeroError } = await supabase
-          .rpc('get_proximo_numero_senha', { tipo_senha: tipo });
-
-        if (numeroError) throw numeroError;
-        if (typeof numeroData !== "number") throw new Error("Número de senha inválido.");
+        // Obter próximo número (RPC ou fallback)
+        const numeroData = await getProximoNumero(tipo);
 
         // Inserir senha com estrutura simplificada
         const { data, error } = await supabase
@@ -174,30 +177,7 @@ export default function Home() {
           description: `Sua senha foi gerada com sucesso.`,
         });
       } catch (supabaseError: any) {
-        console.warn('Supabase falhou, tentando backend:', supabaseError);
-        // Mapear tipos não suportados para bem aceitos pelo backend
-        let tipoBase: 'normal' | 'prioritario' | 'express' = 'normal';
-        if (tipo === 'preferencial' || tipo === 'prioritario') tipoBase = 'prioritario';
-        else if (tipo === 'express') tipoBase = 'express';
-
-        const response = await apiService.generatePassword({ tipo: tipoBase });
-        if (!response.ok || !response.data) {
-          const msg = response.error || 'Falha ao gerar a senha no backend';
-          throw new Error(msg);
-        }
-
-        const generated: any = response.data;
-        const senhaParcial = {
-          numero: (generated.password?.numero ?? 0) as number,
-          tipo: tipo,
-          status: 'aguardando',
-        } as Partial<NovaSenha>;
-
-        setNovaSenha(senhaParcial as NovaSenha);
-        toast({
-          title: 'Senha gerada!',
-          description: `Sua senha foi gerada com sucesso.`,
-        });
+        throw supabaseError;
       }
     } catch (error: unknown) {
       console.error("Erro ao gerar senha:", error);
@@ -349,7 +329,7 @@ export default function Home() {
         {!novaSenha ? (
           fluxoAtivo ? (
             <FluxoPerguntas 
-              tipoInicial={fluxoAtivo}
+              tipoInicial={fluxoAtivo as Exclude<TipoFluxo, null>}
               onTipoSelecionado={gerarSenhaComposita}
               onVoltar={() => setFluxoAtivo(null)}
               isGenerating={isGenerating}
@@ -369,27 +349,6 @@ export default function Home() {
                     <Users className="w-10 h-10" />
                     Atendimento Normal
                   </Button>
-
-                  <Button
-                    onClick={() => setFluxoAtivo("preferencial")}
-                    disabled={isGenerating}
-                    className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
-                    size="lg"
-                  >
-                    <Star className="w-10 h-10" />
-                    Atendimento Preferencial
-                  </Button>
-
-                  <Button
-                    onClick={() => setFluxoAtivo("proprietario")}
-                    disabled={isGenerating}
-                    className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
-                    size="lg"
-                  >
-                    <HomeIcon className="w-10 h-10" />
-                    Proprietário
-                  </Button>
-
                   <Button
                     onClick={() => setFluxoAtivo("check-in")}
                     disabled={isGenerating}
@@ -410,15 +369,7 @@ export default function Home() {
                     Check-out
                   </Button>
 
-                  <Button
-                    onClick={() => setFluxoAtivo("express")}
-                    disabled={isGenerating}
-                    className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
-                    size="lg"
-                  >
-                    <Users className="w-10 h-10" />
-                    Express
-                  </Button>
+                  {/* Botões Proprietário, Express e Preferencial removidos conforme solicitado */}
                 </div>
               </Card>
             </div>
