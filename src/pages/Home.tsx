@@ -23,7 +23,6 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [fluxoAtivo, setFluxoAtivo] = useState<TipoFluxo>(null);
   const { toast } = useToast();
-  const SKIP_APTO_INSERT = (import.meta.env.VITE_SKIP_APTO_INSERT ?? 'true') === 'true';
 
   // Fallback: tenta RPC; se não existir, busca o maior número e incrementa
   async function getProximoNumero(tipo: string) {
@@ -72,8 +71,12 @@ export default function Home() {
         // Inserir senha com nova estrutura, incluindo numero_apartamento quando aplicável
         const payloadBase = { numero: numeroData, tipo: tipoLegado, status: 'aguardando' } as any;
         const payload = { ...payloadBase } as any;
-        if (tipoCheckin === 'proprietario' && numeroApartamento && !SKIP_APTO_INSERT) {
+        // Sempre incluir numero_apartamento para proprietario quando fornecido;
+        // também gravar em 'observacoes' para garantir visibilidade nos relatórios
+        if (tipoCheckin === 'proprietario' && numeroApartamento) {
           payload.numero_apartamento = numeroApartamento;
+          payload.observacoes = `Apartamento ${numeroApartamento}`;
+          payloadBase.observacoes = `Apartamento ${numeroApartamento}`;
         }
 
         let insertData: any;
@@ -85,22 +88,77 @@ export default function Home() {
           .select('id,numero,tipo,status,hora_retirada')
           .single());
 
-        // Fallback silencioso: se a coluna numero_apartamento não existir no PostgREST (erro PGRST204), reinsere sem o campo
-        if (insertError && (insertError.code === 'PGRST204' || /schema cache|numero_apartamento/i.test(insertError.message || ''))) {
-          const { data: dataFallback, error: errorFallback } = await supabase
-            .from('senhas')
-            .insert([payloadBase])
-            .select('id,numero,tipo,status,hora_retirada')
-            .single();
-          if (errorFallback) throw errorFallback;
-          insertData = dataFallback;
-          // Mantém experiência consistente: exibe sucesso sem aviso de migração
-          toast({
-            title: 'Senha gerada!',
-            description: 'Sua senha foi gerada com sucesso.',
-          });
+        // Fallbacks silenciosos para lidar com cache de schema do PostgREST
+        if (insertError) {
+          const msg = String(insertError.message || '');
+          const isSchemaCache = insertError.code === 'PGRST204' || /schema cache/i.test(msg);
+          const mentionsObs = /observacoes/i.test(msg);
+          const mentionsApto = /numero_apartamento/i.test(msg);
+
+          if (isSchemaCache) {
+            // Primeiro tenta sem 'observacoes', preservando 'numero_apartamento' se existir
+            if (mentionsObs && payload.observacoes) {
+              const payloadSemObs: any = { numero: payload.numero, tipo: payload.tipo, status: payload.status };
+              if (payload.numero_apartamento) payloadSemObs.numero_apartamento = payload.numero_apartamento;
+              const { data: dataSemObs, error: errSemObs } = await supabase
+                .from('senhas')
+                .insert([payloadSemObs])
+                .select('id,numero,tipo,status,hora_retirada')
+                .single();
+              if (!errSemObs) {
+                insertData = dataSemObs;
+              } else {
+                // Se ainda falhar, tenta minimal
+                const { data: dataFallback, error: errorFallback } = await supabase
+                  .from('senhas')
+                  .insert([payloadBase])
+                  .select('id,numero,tipo,status,hora_retirada')
+                  .single();
+                if (errorFallback) throw errorFallback;
+                insertData = dataFallback;
+              }
+            } else if (mentionsApto && payload.numero_apartamento) {
+              // Tenta sem 'numero_apartamento' mas mantendo outros campos seguros
+              const { numero, tipo, status } = payload;
+              const payloadSemApto: any = { numero, tipo, status };
+              const { data: dataSemApto, error: errSemApto } = await supabase
+                .from('senhas')
+                .insert([payloadSemApto])
+                .select('id,numero,tipo,status,hora_retirada')
+                .single();
+              if (!errSemApto) {
+                insertData = dataSemApto;
+              } else {
+                // Último fallback: minimal
+                const { data: dataFallback, error: errorFallback } = await supabase
+                  .from('senhas')
+                  .insert([payloadBase])
+                  .select('id,numero,tipo,status,hora_retirada')
+                  .single();
+                if (errorFallback) throw errorFallback;
+                insertData = dataFallback;
+              }
+            } else {
+              // Genérico: tentar remover campos extras
+              const { numero, tipo, status } = payload;
+              const payloadSeguro: any = { numero, tipo, status };
+              const { data: dataSafe, error: errSafe } = await supabase
+                .from('senhas')
+                .insert([payloadSeguro])
+                .select('id,numero,tipo,status,hora_retirada')
+                .single();
+              if (errSafe) throw errSafe;
+              insertData = dataSafe;
+            }
+
+            toast({
+              title: 'Senha gerada!',
+              description: 'Sua senha foi gerada com sucesso.',
+            });
+          } else {
+            throw insertError;
+          }
         } else {
-          if (insertError) throw insertError;
           toast({
             title: 'Senha gerada!',
             description: 'Sua senha foi gerada com sucesso.',
