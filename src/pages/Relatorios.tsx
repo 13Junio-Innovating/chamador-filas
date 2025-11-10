@@ -92,6 +92,14 @@ export default function Relatorios() {
       if (error) throw error;
 
       const rows = (data || []) as any[];
+
+      const extractApartamento = (obs?: string | null): string | null => {
+        if (!obs) return null;
+        // Tenta formatos comuns: "Apartamento 123", "Apto 123", "apto:123"
+        const m = obs.match(/(?:apartamento|apto)\s*[:#-]?\s*(\d{1,6})/i);
+        return m ? m[1] : null;
+      };
+
       const normalizadas: Senha[] = rows.map((r) => ({
         id: r.id,
         numero: r.numero,
@@ -103,7 +111,7 @@ export default function Relatorios() {
         guiche: r.guiche,
         // Usa o melhor campo disponível para 'atendente'
         atendente: (r.atendente ?? r.atendente_nome ?? r.usuario_nome ?? null) as string | null,
-        numero_apartamento: (r.numero_apartamento ?? null) as string | null,
+        numero_apartamento: ((r.numero_apartamento ?? null) as string | null) ?? extractApartamento(r.observacoes),
         created_at: r.created_at,
         updated_at: r.updated_at,
       }));
