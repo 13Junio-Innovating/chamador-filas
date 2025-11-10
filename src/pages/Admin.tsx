@@ -18,6 +18,30 @@ export default function Admin() {
   const [atendente, setAtendente] = useState("");
   const { toast } = useToast();
 
+  // Persistência local de guichê e atendente
+  useEffect(() => {
+    const savedGuiche = localStorage.getItem('admin_guiche');
+    const savedAtendente = localStorage.getItem('admin_nome');
+    if (savedGuiche) setGuiche(savedGuiche);
+    if (savedAtendente) setAtendente(savedAtendente);
+  }, []);
+
+  useEffect(() => {
+    if (guiche) {
+      localStorage.setItem('admin_guiche', guiche);
+    } else {
+      localStorage.removeItem('admin_guiche');
+    }
+  }, [guiche]);
+
+  useEffect(() => {
+    if (atendente) {
+      localStorage.setItem('admin_nome', atendente);
+    } else {
+      localStorage.removeItem('admin_nome');
+    }
+  }, [atendente]);
+
   async function carregar() {
     try {
       const { data, error } = await supabase
@@ -107,6 +131,9 @@ export default function Admin() {
         title: "Senha chamada!",
         description: `Senha ${proxima.numero} chamada.`,
       });
+
+      // Forçar recarregamento imediato
+      await carregar();
     } catch (e: unknown) {
       const description = e instanceof Error
         ? e.message
@@ -133,6 +160,8 @@ export default function Admin() {
         title: "Senha finalizada!",
         description: "Atendimento concluído.",
       });
+
+      await carregar();
     } catch (e: unknown) {
       const description = e instanceof Error
         ? e.message
@@ -161,6 +190,8 @@ export default function Admin() {
         title: "Senha voltou para fila",
         description: "Senha retornou para aguardando.",
       });
+
+      await carregar();
     } catch (e: unknown) {
       const description = e instanceof Error
         ? e.message

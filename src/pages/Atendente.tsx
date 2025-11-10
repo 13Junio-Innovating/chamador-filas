@@ -18,6 +18,30 @@ export default function Atendente() {
   const [atendente, setAtendente] = useState("");
   const { toast } = useToast();
 
+  // Persistência local de guichê e atendente
+  useEffect(() => {
+    const savedGuiche = localStorage.getItem('atendente_guiche');
+    const savedAtendente = localStorage.getItem('atendente_nome');
+    if (savedGuiche) setGuiche(savedGuiche);
+    if (savedAtendente) setAtendente(savedAtendente);
+  }, []);
+
+  useEffect(() => {
+    if (guiche) {
+      localStorage.setItem('atendente_guiche', guiche);
+    } else {
+      localStorage.removeItem('atendente_guiche');
+    }
+  }, [guiche]);
+
+  useEffect(() => {
+    if (atendente) {
+      localStorage.setItem('atendente_nome', atendente);
+    } else {
+      localStorage.removeItem('atendente_nome');
+    }
+  }, [atendente]);
+
   useEffect(() => {
     carregar();
     const channel = supabase
@@ -135,6 +159,9 @@ export default function Atendente() {
         title: "Senha chamada!",
         description: `Senha chamada para o guichê ${guiche}.`,
       });
+
+      // Recarregar dados e atualizar contadores
+      await carregar();
     } catch (e: unknown) {
       const description = e instanceof Error
         ? e.message
@@ -161,6 +188,9 @@ export default function Atendente() {
         title: "Senha finalizada!",
         description: "Atendimento concluído.",
       });
+
+      // Recarregar dados e atualizar contadores
+      await carregar();
     } catch (e: unknown) {
       const description = e instanceof Error
         ? e.message
@@ -189,6 +219,9 @@ export default function Atendente() {
         title: "Senha voltou para fila",
         description: "Senha retornou para aguardando.",
       });
+
+      // Recarregar dados e atualizar contadores
+      await carregar();
     } catch (e: unknown) {
       const description = e instanceof Error
         ? e.message
@@ -212,6 +245,9 @@ export default function Atendente() {
         title: "Senha cancelada!",
         description: "Senha foi cancelada com sucesso.",
       });
+
+      // Recarregar dados e atualizar contadores
+      await carregar();
     } catch (e: unknown) {
       const description = e instanceof Error
         ? e.message
