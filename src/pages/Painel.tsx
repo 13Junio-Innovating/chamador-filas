@@ -54,6 +54,8 @@ export default function Painel() {
   const [tempos, setTempos] = useState<Record<string, string>>({});
   const [voice, setVoice] = useState<SpeechSynthesisVoice | null>(null);
   const prevIdsRef = useRef<Set<string>>(new Set());
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioUnlockedRef = useRef(false);
   
   // Sistema de fila de anúncios com tipos específicos
   const [filaAnuncios, setFilaAnuncios] = useState<AnuncioItem[]>([]);
@@ -73,6 +75,58 @@ export default function Painel() {
   useEffect(() => {
     localStorage.setItem('audioEnabled', JSON.stringify(audioEnabled));
   }, [audioEnabled]);
+
+  // Destravar áudio/speech na primeira interação do usuário
+  const unlockAudioOnce = useCallback(() => {
+    if (audioUnlockedRef.current) return;
+    try {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioContextClass) {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new AudioContextClass();
+        }
+        const ctx = audioCtxRef.current as AudioContext;
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+        // Gerar um som inaudível para desbloquear o contexto de áudio
+        try {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+          osc.frequency.value = 440;
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.01);
+        } catch {}
+      }
+      // "Aquecer" o speechSynthesis com uma utterance silenciosa
+      if (window.speechSynthesis) {
+        try {
+          const u = new SpeechSynthesisUtterance(' ');
+          u.lang = 'pt-BR';
+          u.volume = 0;
+          window.speechSynthesis.speak(u);
+        } catch {}
+      }
+      audioUnlockedRef.current = true;
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const handler = () => unlockAudioOnce();
+    window.addEventListener('pointerdown', handler, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', handler);
+    };
+  }, [unlockAudioOnce]);
+
+  useEffect(() => {
+    if (audioEnabled) {
+      unlockAudioOnce();
+    }
+  }, [audioEnabled, unlockAudioOnce]);
 
   // Função para processar a fila de anúncios - otimizada
   const processarFilaAnuncios = useCallback(() => {
@@ -199,7 +253,13 @@ export default function Painel() {
     
     try {
       const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const audioContext = new AudioContextClass();
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioContextClass();
+      }
+      const audioContext = audioCtxRef.current as AudioContext;
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => {});
+      }
       const oscillator = audioContext.createOscillator();
       const gainNode = audioContext.createGain();
       
@@ -277,6 +337,7 @@ export default function Painel() {
       if (hasNew && audioEnabled) {
         // Aguardar um pouco para garantir que as vozes estejam carregadas
         setTimeout(() => {
+          unlockAudioOnce();
           beep();
           const novos = chamandoAtual.filter(s => !prevIds.has(s.id));
           
@@ -430,7 +491,7 @@ export default function Painel() {
                             {getPrefixo(senha.tipo)}{String(senha.numero).padStart(3, "0")}
                           </div>
                           <div className="text-lg font-semibold text-white truncate">Guichê {senha.guiche}</div>
-                          <div className="text-sm text-white/80 truncate">{senha.atendente_nome}</div>
+                          <div className="text-sm text-white/80 break-words">{senha.atendente_nome}</div>
                         </div>
                         <div className="text-right ml-2 flex-shrink-0 min-w-0">
                           <div className="text-sm font-mono text-white/90 truncate">{tempos[senha.id]}</div>
