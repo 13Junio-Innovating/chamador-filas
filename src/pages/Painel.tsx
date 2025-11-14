@@ -128,6 +128,30 @@ export default function Painel() {
     }
   }, [audioEnabled, unlockAudioOnce]);
 
+  const beep = useCallback(() => {
+    if (!audioEnabled) return;
+    try {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioContextClass();
+      }
+      const audioContext = audioCtxRef.current as AudioContext;
+      if (audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => {});
+      }
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+    } catch (e) {}
+  }, [audioEnabled]);
+
   // Função para processar a fila de anúncios - otimizada
   const processarFilaAnuncios = useCallback(() => {
     if (anunciandoAtualmente || filaAnuncios.length === 0) return;
@@ -152,19 +176,11 @@ export default function Painel() {
     try {
       window.speechSynthesis.cancel();
       
-      const tipoNorm = normalizeTipo(senha.tipo);
-      const prefixoMap: Record<string, string> = {
-        "normal": "normal",
-        "preferencial": "preferencial",
-        "proprietario": "proprietário",
-        "check-in": "check-in",
-        "check-out": "check-out",
-        "express": "express",
-      };
+      
 
-      const numeroFormatado = `${getPrefixo(senha.tipo)} ${String(senha.numero).padStart(3, "0")}`;
-      const textoBase = `Senha ${numeroFormatado}, tipo ${prefixoMap[tipoNorm] || senha.tipo}`;
-      const texto = senha.guiche ? `${textoBase}, encaminhar ao guichê ${senha.guiche}.` : `${textoBase}.`;
+      const codigo = getCodigoComposto(senha);
+      const textoBase = `Senha ${codigo}`;
+      const texto = senha.guiche ? `${textoBase}, dirigir-se ao guichê ${senha.guiche}. Repito: Senha ${codigo}, guichê ${senha.guiche}.` : `${textoBase}.`;
       
       const utterance = new SpeechSynthesisUtterance(texto);
       utterance.lang = "pt-BR";
@@ -183,11 +199,12 @@ export default function Painel() {
         finalizarAnuncio();
       };
       
+      beep();
       window.speechSynthesis.speak(utterance);
     } catch (e) {
       finalizarAnuncio();
     }
-  }, [audioEnabled, voice]);
+  }, [audioEnabled, voice, getCodigoComposto, beep]);
 
   // Executar anúncio de grupo
   const executarAnuncioGrupo = useCallback((senhas: Senha[]) => {
@@ -199,14 +216,14 @@ export default function Painel() {
     try {
       window.speechSynthesis.cancel();
       
-      const numeros = senhas.map((s) => `${getPrefixo(s.tipo)} ${String(s.numero).padStart(3, "0")}`);
+      const numeros = senhas.map((s) => getCodigoComposto(s));
       const guichesUnicos = Array.from(new Set(senhas.map(s => s.guiche).filter(Boolean))) as (string | number)[];
       const fraseGuiches = guichesUnicos.length
         ? (guichesUnicos.length === 1
             ? ` Encaminhar ao guichê ${guichesUnicos[0]}.`
             : ` Encaminhar aos guichês ${guichesUnicos.join(', ')}.`)
         : '';
-      const texto = `Chamando as senhas ${numeros.join(', ')}.${fraseGuiches}`;
+      const texto = `Chamando as senhas ${numeros.join(', ')}.${fraseGuiches} Repito: ${numeros.join(', ')}.${fraseGuiches}`;
       
       const utterance = new SpeechSynthesisUtterance(texto);
       utterance.lang = "pt-BR";
@@ -223,11 +240,12 @@ export default function Painel() {
         finalizarAnuncio();
       };
       
+      beep();
       window.speechSynthesis.speak(utterance);
     } catch (error: unknown) {
       finalizarAnuncio();
     }
-  }, [audioEnabled, voice]);
+  }, [audioEnabled, voice, getCodigoComposto, beep]);
 
   // Finalizar anúncio atual e processar próximo - otimizada
   const finalizarAnuncio = useCallback(() => {
@@ -247,37 +265,6 @@ export default function Painel() {
     }
   }, [filaAnuncios.length, anunciandoAtualmente, processarFilaAnuncios]);
 
-  // Função beep otimizada
-  const beep = useCallback(() => {
-    if (!audioEnabled) return;
-    
-    try {
-      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new AudioContextClass();
-      }
-      const audioContext = audioCtxRef.current as AudioContext;
-      if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(() => {});
-      }
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.frequency.value = 800;
-      oscillator.type = 'sine';
-      
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-      
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (e) {
-      // Silencioso para evitar spam no console
-    }
-  }, [audioEnabled]);
 
   // Funções públicas que agora usam a fila - otimizadas
   const anunciarSenha = useCallback((senha: Senha) => {
@@ -371,6 +358,9 @@ export default function Painel() {
       console.log('Vozes PT-BR:', ptBr.map(v => v.name));
       console.log('Vozes PT:', pt.map(v => v.name));
       
+      const preferredName = localStorage.getItem('preferredVoiceName') || '';
+      const byPreferred = preferredName ? [...ptBr, ...pt].find(v => v.name === preferredName) || null : null;
+
       // Priorizar vozes femininas
       const femaleVoices = [...ptBr, ...pt].filter(v => 
         /(female|mulher|ana|maria|raquel|lu[cç]iana|camila|bruna|paula|helena|sofia|clara|beatriz|fernanda|carolina|isabela|gabriela|amanda|juliana|leticia|natalia|patricia|roberta|sandra|silvia|tatiana|vanessa|viviane)/i.test(v.name) ||
@@ -381,11 +371,15 @@ export default function Painel() {
       const googlePtBr = ptBr.find(v => /google/i.test(v.name));
       const googleFemale = femaleVoices.find(v => /google/i.test(v.name));
       
-      // Ordem de preferência: Google feminina > qualquer feminina > Google PT-BR > primeira PT-BR > primeira PT
-      const selectedVoice = googleFemale || femaleVoices[0] || googlePtBr || ptBr[0] || pt[0] || voices[0] || null;
+      // Ordem de preferência: preferida anterior > Google feminina > Microsoft Maria > qualquer feminina > Google PT-BR > primeira PT-BR > primeira PT
+      const microsoftMaria = [...ptBr, ...pt].find(v => /maria/i.test(v.name) && /microsoft/i.test(v.name)) || null;
+      const selectedVoice = byPreferred || googleFemale || microsoftMaria || femaleVoices[0] || googlePtBr || ptBr[0] || pt[0] || voices[0] || null;
       
       console.log('Voz selecionada:', selectedVoice?.name || 'Nenhuma');
       setVoice(selectedVoice);
+      if (selectedVoice?.name) {
+        localStorage.setItem('preferredVoiceName', selectedVoice.name);
+      }
     };
 
     const loadVoices = () => {
@@ -488,7 +482,7 @@ export default function Painel() {
                       <div className="flex justify-between items-center">
                         <div className="min-w-0 flex-1">
                           <div className="text-2xl font-bold text-white mb-1">
-                            {getPrefixo(senha.tipo)}{String(senha.numero).padStart(3, "0")}
+                            {getCodigoComposto(senha)}
                           </div>
                           <div className="text-lg font-semibold text-white truncate">Guichê {senha.guiche}</div>
                           <div className="text-sm text-white/80 break-words">{senha.atendente_nome}</div>
@@ -518,7 +512,7 @@ export default function Painel() {
                   {proximas.map((senha) => (
                     <div key={senha.id} className="bg-white/10 rounded-lg p-3 text-center backdrop-blur-sm">
                       <div className="text-xl font-bold text-white mb-1">
-                        {getPrefixo(senha.tipo)}{String(senha.numero).padStart(3, "0")}
+                        {getCodigoComposto(senha)}
                       </div>
                       <div className="text-xs font-mono text-white/70">{tempos[senha.id]}</div>
                     </div>
@@ -558,5 +552,32 @@ export default function Painel() {
       </div>
     </div>
   );
+}
+function getCodigoComposto(s: Senha) {
+  const num = String(s.numero).padStart(4, '0');
+  const obs = String((s as any).observacoes || '').toLowerCase();
+  const isPrioritario = /prioritario/i.test(obs) || normalizeTipo(s.tipo) === 'preferencial';
+
+  if (normalizeTipo(s.tipo) === 'check-out') {
+    const code = isPrioritario ? 'COXP' : 'COXC';
+    return `${code}-${num}`;
+  }
+
+  if (/checkin:express/i.test(obs)) {
+    const code = isPrioritario ? 'CIEP' : 'CIEC';
+    return `${code}-${num}`;
+  }
+  if (/checkin:normal/i.test(obs)) {
+    const code = isPrioritario ? 'CINP' : 'CINC';
+    return `${code}-${num}`;
+  }
+  if (/checkin:proprietario/i.test(obs) || normalizeTipo(s.tipo) === 'proprietario') {
+    const code = isPrioritario ? 'CIPP' : 'CIPC';
+    return `${code}-${num}`;
+  }
+
+  // Atendimento padrão
+  const code = isPrioritario ? 'ATNP' : 'ATNC';
+  return `${code}-${num}`;
 }
 

@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Users, Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
-import { Star, Users, Home as HomeIcon, LogIn, LogOut, Printer, Check } from "lucide-react";
+ 
 import FluxoPerguntas from "@/components/FluxoPerguntas";
 
 interface NovaSenha {
@@ -22,7 +24,23 @@ export default function Home() {
   const [novaSenha, setNovaSenha] = useState<NovaSenha | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [fluxoAtivo, setFluxoAtivo] = useState<TipoFluxo>(null);
+  const [prioridadeTipo, setPrioridadeTipo] = useState<null | "atendimento" | "check-out">(null);
+  const [categoriaAtual, setCategoriaAtual] = useState<null | "atendimento" | "check-out" | "check-in:express" | "check-in:normal" | "check-in:proprietario">(null);
+  const [prioridadeAtual, setPrioridadeAtual] = useState<null | "prioritario" | "comum">(null);
   const { toast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const path = location.pathname;
+    if (path === '/atendimento') {
+      setPrioridadeTipo('atendimento');
+    } else if (path === '/check-out') {
+      setPrioridadeTipo('check-out');
+    } else {
+      setPrioridadeTipo(null);
+    }
+  }, [location.pathname]);
 
   // Fallback: tenta RPC; se não existir, busca o maior número e incrementa
   async function getProximoNumero(tipo: string) {
@@ -71,11 +89,14 @@ export default function Home() {
         // Inserir senha com nova estrutura, incluindo numero_apartamento quando aplicável
         const payloadBase = { numero: numeroData, tipo: tipoLegado, status: 'aguardando' } as any;
         const payload = { ...payloadBase } as any;
+        // Adicionar tags de observações para composição
+        const tags = [`checkin:${tipoCheckin}`, `prioridade:${prioridadeNivel}`];
+        payload.observacoes = payload.observacoes ? `${payload.observacoes}; ${tags.join('; ')}` : tags.join('; ');
         // Sempre incluir numero_apartamento para proprietario quando fornecido;
         // também gravar em 'observacoes' para garantir visibilidade nos relatórios
         if (tipoCheckin === 'proprietario' && numeroApartamento) {
           payload.numero_apartamento = numeroApartamento;
-          payload.observacoes = `Apartamento ${numeroApartamento}`;
+          payload.observacoes = payload.observacoes ? `${payload.observacoes}; Apartamento ${numeroApartamento}` : `Apartamento ${numeroApartamento}`;
           payloadBase.observacoes = `Apartamento ${numeroApartamento}`;
         }
 
@@ -167,12 +188,14 @@ export default function Home() {
 
         console.log('Senha inserida:', insertData);
 
+        setCategoriaAtual(`check-in:${tipoCheckin}` as any);
+        setPrioridadeAtual(prioridadeNivel as any);
         setNovaSenha({
           id: insertData?.id as string,
           numero: insertData?.numero as number,
           tipo: insertData?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
-          tipoCheckin: undefined,
-          prioridadeNivel: undefined,
+          tipoCheckin: tipoCheckin,
+          prioridadeNivel: prioridadeNivel,
           status: insertData?.status as string,
         });
 
@@ -200,7 +223,7 @@ export default function Home() {
     }
   }
 
-  async function gerarSenha(tipo: "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express") {
+  async function gerarSenha(tipo: "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express", observacoes?: string) {
     setIsGenerating(true);
     try {
       try {
@@ -208,17 +231,33 @@ export default function Home() {
         const numeroData = await getProximoNumero(tipo);
 
         // Inserir senha com estrutura simplificada
-        const { data, error } = await supabase
+        let data: any; let error: any;
+        ({ data, error } = await supabase
           .from('senhas')
           .insert([{ 
             numero: numeroData, 
             tipo: tipo,
-            status: 'aguardando' 
+            status: 'aguardando',
+            ...(observacoes ? { observacoes } : {})
           }])
           .select()
-          .single();
+          .single());
 
-        if (error) throw error;
+        if (error) {
+          const msg = String(error.message || '');
+          const isSchemaCache = error.code === 'PGRST204' || /schema cache/i.test(msg) || /observacoes/i.test(msg);
+          if (isSchemaCache) {
+            const retry = await supabase
+              .from('senhas')
+              .insert([{ numero: numeroData, tipo, status: 'aguardando' }])
+              .select()
+              .single();
+            if (retry.error) throw retry.error;
+            data = retry.data;
+          } else {
+            throw error;
+          }
+        }
 
         console.log('Senha inserida:', data);
 
@@ -226,8 +265,8 @@ export default function Home() {
           id: data?.id as string,
           numero: data?.numero as number,
           tipo: data?.tipo as "normal" | "preferencial" | "proprietario" | "check-in" | "check-out" | "express",
-          tipoCheckin: undefined,
-          prioridadeNivel: undefined,
+          tipoCheckin: categoriaAtual?.startsWith('check-in:') ? (categoriaAtual.split(':')[1] as any) : undefined,
+          prioridadeNivel: prioridadeAtual || undefined,
           status: data?.status as string,
         });
         toast({
@@ -264,19 +303,8 @@ export default function Home() {
   const imprimirSenha = () => {
     if (!novaSenha) return;
 
-    const getPrefixoETipo = (tipo: string) => {
-      switch (tipo) {
-        case "preferencial": return { prefixo: "P", nome: "Atendimento Preferencial" };
-        case "proprietario": return { prefixo: "PR", nome: "Proprietário" };
-        case "check-in": return { prefixo: "CI", nome: "Check-in" };
-        case "check-out": return { prefixo: "CO", nome: "Check-out" };
-        case "hospede": return { prefixo: "H", nome: "Hóspede" };
-        default: return { prefixo: "N", nome: "Atendimento Normal" };
-      }
-    };
-
-    const { prefixo, nome } = getPrefixoETipo(novaSenha.tipo);
-    const numero = `${prefixo}${String(novaSenha.numero).padStart(3, "0")}`;
+    const nome = getNomeTicket();
+    const numero = getCodigoTicket();
     const w = window.open("", "_blank");
 
     if (!w || !w.document) {
@@ -326,19 +354,19 @@ export default function Home() {
       case "check-out": return "Check-out";
       case "express": return "Express";
       case "hospede": return "Hóspede";
-      default: return "Atendimento Normal";
+      default: return "Atendimento";
     }
   }
 
   function getTipoNomeComposto(tipoCheckin?: string, prioridadeNivel?: string, tipoLegado?: string) {
     if (tipoCheckin && prioridadeNivel) {
       const nomes = {
-        'proprietario_prioritario': 'Proprietário Prioritário',
-        'proprietario_comum': 'Proprietário',
-        'express_prioritario': 'Express Prioritário',
-        'express_comum': 'Express',
-        'normal_prioritario': 'Atendimento Preferencial',
-        'normal_comum': 'Atendimento Normal'
+        'proprietario_prioritario': 'Check-in Proprietário – Prioritário Lei',
+        'proprietario_comum': 'Check-in Proprietário – Comum',
+        'express_prioritario': 'Check-in Express – Prioritário Lei',
+        'express_comum': 'Check-in Express – Comum',
+        'normal_prioritario': 'Check-in Normal – Prioritário Lei',
+        'normal_comum': 'Check-in Normal – Comum'
       };
       return nomes[`${tipoCheckin}_${prioridadeNivel}` as keyof typeof nomes] || getTipoNome(tipoLegado || 'normal');
     }
@@ -348,16 +376,44 @@ export default function Home() {
   function getPrefixoComposto(tipoCheckin?: string, prioridadeNivel?: string, tipoLegado?: string) {
     if (tipoCheckin && prioridadeNivel) {
       const prefixos = {
-        'proprietario_prioritario': 'PP',
-        'proprietario_comum': 'P',
-        'express_prioritario': 'EP',
-        'express_comum': 'E',
-        'normal_prioritario': 'NP',
-        'normal_comum': 'N'
+        'proprietario_prioritario': 'CIPP',
+        'proprietario_comum': 'CIPC',
+        'express_prioritario': 'CIEP',
+        'express_comum': 'CIEC',
+        'normal_prioritario': 'CINP',
+        'normal_comum': 'CINC'
       };
       return prefixos[`${tipoCheckin}_${prioridadeNivel}` as keyof typeof prefixos] || getPrefixo(tipoLegado || 'normal');
     }
     return getPrefixo(tipoLegado || 'normal');
+  }
+  function getNomeTicket() {
+    if (novaSenha?.tipoCheckin && novaSenha?.prioridadeNivel) {
+      return getTipoNomeComposto(novaSenha.tipoCheckin, novaSenha.prioridadeNivel, novaSenha.tipo);
+    }
+    if (categoriaAtual === 'atendimento') {
+      return prioridadeAtual === 'prioritario' ? 'Atendimento – Prioritário Lei' : 'Atendimento – Comum';
+    }
+    if (categoriaAtual === 'check-out') {
+      return prioridadeAtual === 'prioritario' ? 'Check-out – Prioritário Lei' : 'Check-out – Comum';
+    }
+    return getTipoNome(novaSenha?.tipo || 'normal');
+  }
+
+  function getCodigoTicket() {
+    if (novaSenha?.tipoCheckin && novaSenha?.prioridadeNivel) {
+      const prefixo = getPrefixoComposto(novaSenha.tipoCheckin, novaSenha.prioridadeNivel, novaSenha.tipo);
+      return `${prefixo}-${String(novaSenha.numero).padStart(4, "0")}`;
+    }
+    if (categoriaAtual === 'atendimento') {
+      const prefixo = prioridadeAtual === 'prioritario' ? 'ATNP' : 'ATNC';
+      return `${prefixo}-${String(novaSenha?.numero || 0).padStart(4, "0")}`;
+    }
+    if (categoriaAtual === 'check-out') {
+      const prefixo = prioridadeAtual === 'prioritario' ? 'COXP' : 'COXC';
+      return `${prefixo}-${String(novaSenha?.numero || 0).padStart(4, "0")}`;
+    }
+    return `${getPrefixo(novaSenha?.tipo || 'normal')}${String(novaSenha?.numero || 0).padStart(3, "0")}`;
   }
 
   return (
@@ -399,13 +455,12 @@ export default function Home() {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   <Button
-                    onClick={() => gerarSenha("normal")}
+                    onClick={() => navigate('/atendimento')}
                     disabled={isGenerating}
                     className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
                     size="lg"
                   >
-                    <Users className="w-10 h-10" />
-                    Atendimento Normal
+                    Atendimento
                   </Button>
                   <Button
                     onClick={() => setFluxoAtivo("check-in")}
@@ -413,17 +468,15 @@ export default function Home() {
                     className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
                     size="lg"
                   >
-                    <LogIn className="w-10 h-10" />
                     Check-in
                   </Button>
 
                   <Button
-                    onClick={() => gerarSenha("check-out")}
+                    onClick={() => navigate('/check-out')}
                     disabled={isGenerating}
                     className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
                     size="lg"
                   >
-                    <LogOut className="w-10 h-10" />
                     Check-out
                   </Button>
 
@@ -436,14 +489,13 @@ export default function Home() {
           <div className="max-w-md mx-auto">
             <Card className="p-8 text-center shadow-elevated animate-scale-in bg-black/50 backdrop-blur-md border-white/20">
               <div className="mb-6">
-                <Check className="w-16 h-16 text-success mx-auto mb-4" />
                 <h2 className="text-2xl font-bold mb-2 text-white">Senha Gerada!</h2>
-                <p className="text-white/80">{getTipoNome(novaSenha.tipo)}</p>
+                <p className="text-white/80">{getNomeTicket()}</p>
               </div>
               
               <div className="bg-white/10 border-2 border-white/20 rounded-lg p-8 mb-6">
                 <div className="text-6xl font-bold text-white">
-                  {getPrefixo(novaSenha.tipo)}{String(novaSenha.numero).padStart(3, "0")}
+                  {getCodigoTicket()}
                 </div>
               </div>
 
@@ -453,11 +505,69 @@ export default function Home() {
 
               <div className="flex gap-3">
                 <Button onClick={imprimirSenha} className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/20" variant="outline">
-                  <Printer className="w-4 h-4 mr-2" />
                   Imprimir
                 </Button>
                 <Button onClick={() => setNovaSenha(null)} className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/20">
                   Nova Senha
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+        {prioridadeTipo && (
+          <div className="max-w-4xl mx-auto mt-8">
+            <Card className="p-8 shadow-elevated animate-scale-in bg-black/50 backdrop-blur-md border-white/20">
+              <div className="mb-6">
+                <Button
+                  onClick={() => navigate('/')}
+                  variant="ghost"
+                  className="text-white hover:bg-white/10"
+                  disabled={isGenerating}
+                >
+                  Voltar
+                </Button>
+              </div>
+              <h2 className="text-2xl font-bold text-center mb-8 text-white">É prioritário por lei (gestante, idoso, PCD, etc.)?</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Button
+                  onClick={() => {
+                    if (prioridadeTipo === 'atendimento') {
+                      setCategoriaAtual('atendimento');
+                      setPrioridadeAtual('prioritario');
+                      gerarSenha('preferencial');
+                    } else if (prioridadeTipo === 'check-out') {
+                      setCategoriaAtual('check-out');
+                      setPrioridadeAtual('prioritario');
+                      gerarSenha('check-out', 'Prioritário Lei');
+                    }
+                    setPrioridadeTipo(null);
+                  }}
+                  disabled={isGenerating}
+                  className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
+                  size="lg"
+                >
+                  <Star className="w-10 h-10" />
+                  Sim
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (prioridadeTipo === 'atendimento') {
+                      setCategoriaAtual('atendimento');
+                      setPrioridadeAtual('comum');
+                      gerarSenha('normal');
+                    } else if (prioridadeTipo === 'check-out') {
+                      setCategoriaAtual('check-out');
+                      setPrioridadeAtual('comum');
+                      gerarSenha('check-out', 'Comum');
+                    }
+                    setPrioridadeTipo(null);
+                  }}
+                  disabled={isGenerating}
+                  className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
+                  size="lg"
+                >
+                  <Users className="w-10 h-10" />
+                  Não
                 </Button>
               </div>
             </Card>

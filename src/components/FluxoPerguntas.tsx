@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { ArrowLeft, Users, Star, Home as HomeIcon, Zap } from "lucide-react";
 
 interface FluxoPerguntasProps {
   tipoInicial: "preferencial" | "proprietario" | "check-in" | "express";
@@ -15,8 +14,7 @@ type Etapa =
   | 'checkin_tipo'
   | 'eh_proprietario'
   | 'numero_apartamento'
-  | 'fez_web_checkin'
-  | 'assinou_efnrh';
+  | 'fez_web_checkin';
 
 export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVoltar, isGenerating }: FluxoPerguntasProps) {
   const [etapaAtual, setEtapaAtual] = useState<Etapa>(tipoInicial === 'check-in' ? 'eh_proprietario' : 'prioridade');
@@ -24,7 +22,7 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
   const [isProprietario, setIsProprietario] = useState<boolean | null>(null);
   const [numeroApartamento, setNumeroApartamento] = useState<string>("");
   const [fezWebCheckin, setFezWebCheckin] = useState<boolean | null>(null);
-  const [assinouEFNRH, setAssinouEFNRH] = useState<boolean | null>(null);
+  
 
   const handleResposta = (resposta: boolean) => {
     console.log('handleResposta chamada com:', { resposta, etapaAtual, tipoInicial });
@@ -51,13 +49,8 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
           console.log('Fluxo check-in: proprietario → gerar');
           onTipoSelecionado('proprietario', prioridadeNivel, numeroApartamento || undefined);
         } else if (fezWebCheckin) {
-          if (assinouEFNRH) {
-            console.log('Fluxo check-in: web + E-FNRH → express');
-            onTipoSelecionado('express', prioridadeNivel);
-          } else {
-            console.log('Fluxo check-in: web sem E-FNRH → normal');
-            onTipoSelecionado('normal', prioridadeNivel);
-          }
+          console.log('Fluxo check-in: web → express');
+          onTipoSelecionado('express', prioridadeNivel);
         } else {
           console.log('Fluxo check-in: sem web → normal');
           onTipoSelecionado('normal', prioridadeNivel);
@@ -79,16 +72,7 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
       }
     } else if (etapaAtual === 'fez_web_checkin') {
       setFezWebCheckin(resposta);
-      if (resposta) {
-        console.log('Check-in: fez web check-in → perguntar E-FNRH');
-        setEtapaAtual('assinou_efnrh');
-      } else {
-        console.log('Check-in: não fez web check-in → perguntar prioridade');
-        setEtapaAtual('prioridade');
-      }
-    } else if (etapaAtual === 'assinou_efnrh') {
-      setAssinouEFNRH(resposta);
-      console.log('Check-in: respondeu E-FNRH → perguntar prioridade');
+      console.log('Check-in: perguntar prioridade');
       setEtapaAtual('prioridade');
     }
   };
@@ -117,23 +101,23 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
   const getOpcoes = () => {
     if (etapaAtual === 'prioridade') {
       return [
-        { valor: true, icone: Star, texto: "Sim" },
-        { valor: false, icone: Users, texto: "Não" }
+        { valor: true, texto: "Sim" },
+        { valor: false, texto: "Não" }
       ];
     } else if (etapaAtual === 'checkin_tipo') {
       return [
-        { valor: true, icone: Zap, texto: "Sim" },
-        { valor: false, icone: Users, texto: "Não" }
+        { valor: true, texto: "Sim" },
+        { valor: false, texto: "Não" }
       ];
     } else if (etapaAtual === 'eh_proprietario') {
       return [
-        { valor: true, icone: HomeIcon, texto: "Sim" },
-        { valor: false, icone: Users, texto: "Não" }
+        { valor: true, texto: "Sim" },
+        { valor: false, texto: "Não" }
       ];
-    } else if (etapaAtual === 'fez_web_checkin' || etapaAtual === 'assinou_efnrh') {
+    } else if (etapaAtual === 'fez_web_checkin') {
       return [
-        { valor: true, icone: Zap, texto: "Sim" },
-        { valor: false, icone: Users, texto: "Não" }
+        { valor: true, texto: "Sim" },
+        { valor: false, texto: "Não" }
       ];
     }
     return [];
@@ -149,7 +133,6 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
             className="text-white hover:bg-white/10"
             disabled={isGenerating}
           >
-            <ArrowLeft className="w-4 h-4 mr-2" />
             Voltar
           </Button>
         </div>
@@ -207,7 +190,6 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
                   className="h-32 text-lg flex flex-col gap-3 bg-white/10 hover:bg-white/20 text-white border-white/20 backdrop-blur-sm"
                   size="lg"
                 >
-                  <opcao.icone className="w-10 h-10" />
                   {opcao.texto}
                 </Button>
               ))}
