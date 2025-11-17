@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -8,7 +8,6 @@ import { useToast } from "@/hooks/use-toast";
 import SenhaCard from "@/components/SenhaCard";
 import Layout from "@/components/Layout";
 import { Phone, CheckCircle, RotateCcw, X, Users, Star } from "lucide-react";
-// Removed Radix Select in favor of native select for stability
 import type { Tables } from "@/integrations/supabase/types";
 
 export default function Atendente() {
@@ -17,6 +16,16 @@ export default function Atendente() {
   const [guiche, setGuiche] = useState<string | null>(null);
   const [atendente, setAtendente] = useState("");
   const { toast } = useToast();
+  const [tipoAtendendo, setTipoAtendendo] = useState<string>(() => {
+    try {
+      return localStorage.getItem('atendente_tipo_atendendo') || '';
+    } catch {
+      return '';
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem('atendente_tipo_atendendo', tipoAtendendo);
+  }, [tipoAtendendo]);
 
   // Persistência local de guichê e atendente
   useEffect(() => {
@@ -42,21 +51,7 @@ export default function Atendente() {
     }
   }, [atendente]);
 
-  useEffect(() => {
-    carregar();
-    const channel = supabase
-      .channel('atendente-senhas')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'senhas' }, () => {
-        carregar();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  async function carregar() {
+  const carregar = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('senhas')
@@ -64,7 +59,6 @@ export default function Atendente() {
         .order('hora_retirada', { ascending: true });
 
       if (error) throw error;
-      console.log('Dados carregados do Supabase:', data);
       setSenhas(data || []);
 
       // Calcular estatísticas
@@ -85,7 +79,21 @@ export default function Atendente() {
           : String(e);
       toast({ title: "Erro ao carregar", description, variant: "destructive" });
     }
-  }
+  }, [toast]);
+
+  useEffect(() => {
+    carregar();
+    const channel = supabase
+      .channel('atendente-senhas')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'senhas' }, () => {
+        carregar();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [carregar]);
 
   const chamarProxima = async () => {
     if (!guiche || !atendente) {
@@ -94,15 +102,12 @@ export default function Atendente() {
     }
 
     try {
-      const aguardando = senhas.filter(s => s.status === 'aguardando')
-        .sort((a, b) => {
-          if (a.tipo === 'preferencial' && b.tipo !== 'preferencial') return -1;
-          if (b.tipo === 'preferencial' && a.tipo !== 'preferencial') return 1;
-          return new Date(a.hora_retirada).getTime() - new Date(b.hora_retirada).getTime();
-        });
+      // Respeitar filtro de tipo selecionado
+      const aguardando = proximasSenhas;
 
       if (aguardando.length === 0) {
-        toast({ title: "Sem senhas aguardando", description: "Não há senhas na fila.", variant: "destructive" });
+        const msg = tipoAtendendo ? "Sem senhas para o tipo selecionado" : "Sem senhas aguardando";
+        toast({ title: msg, description: "Não há senhas na fila.", variant: "destructive" });
         return;
       }
 
@@ -119,9 +124,6 @@ export default function Atendente() {
         .eq('id', proxima.id);
 
       if (error) throw error;
-
-      console.log('Senha atualizada para chamando:', proxima.id, 'Guichê:', guiche, 'Atendente:', atendente);
-      
       // Forçar recarregamento imediato
       await carregar();
 
@@ -280,6 +282,27 @@ export default function Atendente() {
   const aguardandoPreferencial = senhasOrdenadas.filter(s => s.status === 'aguardando' && s.tipo === 'preferencial');
   const chamando = senhasOrdenadas.filter(s => s.status === 'chamando');
 
+  const proximasSenhas = senhas
+    .filter(s => s.status === 'aguardando')
+    .filter(s => {
+      if (!tipoAtendendo) return true;
+      const obs = String(s.observacoes || '').toLowerCase();
+      const tipoNorm = String(s.tipo).toLowerCase();
+      const group = tipoNorm === 'check-out' ? 'check-out'
+                   : /checkin:proprietario/.test(obs) ? 'proprietario'
+                   : /checkin:express/.test(obs) ? 'express'
+                   : /checkin:normal/.test(obs) ? 'normal'
+                   : 'atendimento';
+      const prioridade = (tipoNorm === 'preferencial' || /prioridade:prioritario/.test(obs)) ? 'prioridade' : 'comum';
+      const key = `${group}_${prioridade}`;
+      return key === tipoAtendendo;
+    })
+    .sort((a, b) => {
+      if (a.tipo === 'preferencial' && b.tipo !== 'preferencial') return -1;
+      if (b.tipo === 'preferencial' && a.tipo !== 'preferencial') return 1;
+      return new Date(a.hora_retirada).getTime() - new Date(b.hora_retirada).getTime();
+    });
+
   return (
     <Layout showThemeToggle={true} showAdminLink={false} showRelatoriosLink={false} showHomeLink={false}>
       <div className="container mx-auto p-6 space-y-6">
@@ -322,6 +345,7 @@ export default function Atendente() {
               <Label htmlFor="guiche">Guichê</Label>
               <select
                 id="guiche"
+                title="Guichê"
                 className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={guiche ?? ""}
                 onChange={(e) => setGuiche(e.target.value || null)}
@@ -340,7 +364,27 @@ export default function Atendente() {
               </select>
             </div>
             <div>
-              <Label htmlFor="atendente">Atendente</Label>
+              <Label htmlFor="tipoAtendendo">Tipo</Label>
+              <select
+                id="tipoAtendendo"
+                title="Tipo de fila atendida"
+                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                value={tipoAtendendo}
+                onChange={(e) => setTipoAtendendo(e.target.value)}
+              >
+                <option value="">Todas</option>
+                      <option value="atendimento_prioridade">Atendimento-Prioridade</option>
+                      <option value="atendimento_comum">Atendimento- Normal</option>
+                      <option value="check-out_prioridade">Check-out - Prioridade</option>
+                      <option value="check-out_comum">Check-out - comum</option>
+                      <option value="proprietario_prioridade">Proprietário- Prioridade</option>
+                      <option value="proprietario_comum">Proprietário- Comum</option>
+                      <option value="express_prioridade">Express - Prioridade</option>
+                      <option value="express_comum">Express - Comum</option>
+                    </select>
+            </div>
+            <div>
+              <Label htmlFor="atendente">Nome do atendente</Label>
               <Input
                 id="atendente"
                 placeholder="Nome do atendente"
@@ -363,7 +407,7 @@ export default function Atendente() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-4">
               <Star className="w-5 h-5 text-warning" />
-              <h3 className="text-lg font-semibold">Fila Preferencial ({aguardandoPreferencial.length})</h3>
+              <h3 className="text-lg font-semibold">Fila Prioritária ({aguardandoPreferencial.length})</h3>
             </div>
             <div className="space-y-3 max-h-96 overflow-y-auto">
               {aguardandoPreferencial.map((senha) => (
@@ -382,7 +426,7 @@ export default function Atendente() {
                 </div>
               ))}
               {aguardandoPreferencial.length === 0 && (
-                <p className="text-center text-muted-foreground py-8">Nenhuma senha preferencial aguardando</p>
+                 <p className="text-center text-muted-foreground py-8">Nenhuma senha prioritária aguardando</p>
               )}
             </div>
           </Card>
@@ -391,7 +435,7 @@ export default function Atendente() {
           <Card className="p-6">
             <div className="flex items-center gap-2 mb-4">
               <Users className="w-5 h-5 text-primary" />
-              <h3 className="text-lg font-semibold">Fila Normal ({aguardandoNormal.length})</h3>
+              <h3 className="text-lg font-semibold">Fila Comum ({aguardandoNormal.length})</h3>
             </div>
             <div className="space-y-3 max-h-96 overflow-y-auto">
               {aguardandoNormal.map((senha) => (
@@ -410,7 +454,7 @@ export default function Atendente() {
                 </div>
               ))}
               {aguardandoNormal.length === 0 && (
-                <p className="text-center text-muted-foreground py-8">Nenhuma senha normal aguardando</p>
+                <p className="text-center text-muted-foreground py-8">Nenhuma senha comum aguardando</p>
               )}
             </div>
           </Card>
@@ -418,7 +462,7 @@ export default function Atendente() {
 
         {/* Senhas Chamando */}
         <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4">Senhas em Atendimento ({chamando.length})</h3>
+          <h3 className="text-lg font-semibold mb-4">Senhas Chamando Agora ({chamando.length})</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {chamando.map((senha) => (
               <div key={senha.id} className="space-y-3">
@@ -438,7 +482,7 @@ export default function Atendente() {
               </div>
             ))}
             {chamando.length === 0 && (
-              <p className="text-center text-muted-foreground py-8 col-span-full">Nenhuma senha em atendimento</p>
+               <p className="text-center text-muted-foreground py-8 col-span-full">Nenhuma senha chamando agora</p>
             )}
           </div>
         </Card>

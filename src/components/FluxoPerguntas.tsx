@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 
 interface FluxoPerguntasProps {
   tipoInicial: "preferencial" | "proprietario" | "check-in" | "express";
-  onTipoSelecionado: (tipoCheckin: string, prioridadeNivel: string, numeroApartamento?: string) => void;
+  onTipoSelecionado: (tipoCheckin: string, prioridadeNivel: string, numeroApartamento?: string, efnrhAssinada?: boolean) => void;
   onVoltar: () => void;
   isGenerating: boolean;
 }
@@ -14,7 +14,8 @@ type Etapa =
   | 'checkin_tipo'
   | 'eh_proprietario'
   | 'numero_apartamento'
-  | 'fez_web_checkin';
+  | 'fez_web_checkin'
+  | 'assinou_efnrh';
 
 export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVoltar, isGenerating }: FluxoPerguntasProps) {
   const [etapaAtual, setEtapaAtual] = useState<Etapa>(tipoInicial === 'check-in' ? 'eh_proprietario' : 'prioridade');
@@ -22,58 +23,67 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
   const [isProprietario, setIsProprietario] = useState<boolean | null>(null);
   const [numeroApartamento, setNumeroApartamento] = useState<string>("");
   const [fezWebCheckin, setFezWebCheckin] = useState<boolean | null>(null);
-  
+  const [assinouEfnrh, setAssinouEfnrh] = useState<boolean | null>(null);
+
 
   const handleResposta = (resposta: boolean) => {
-    console.log('handleResposta chamada com:', { resposta, etapaAtual, tipoInicial });
     
     if (etapaAtual === 'prioridade') {
       const prioridadeNivel = resposta ? 'prioritario' : 'comum';
       setPrioridadeEscolhida(prioridadeNivel);
       
-      console.log('Prioridade escolhida:', prioridadeNivel);
+      // Se assinou E-FNRH, força prioritário independente de outras condições
+      const finalPrioridade = (assinouEfnrh ? 'prioritario' : prioridadeNivel);
+      const efnrhFlag = assinouEfnrh ?? undefined;
       
       // Para tipos específicos, gerar diretamente
       if (tipoInicial === 'preferencial') {
-        console.log('Chamando onTipoSelecionado para preferencial');
-        onTipoSelecionado('normal', 'prioritario');
+        onTipoSelecionado('normal', 'prioritario', undefined, efnrhFlag);
       } else if (tipoInicial === 'proprietario') {
-        console.log('Chamando onTipoSelecionado para proprietario');
-        onTipoSelecionado('proprietario', prioridadeNivel, numeroApartamento || undefined);
+        onTipoSelecionado('proprietario', finalPrioridade, numeroApartamento || undefined, efnrhFlag);
       } else if (tipoInicial === 'express') {
-        console.log('Chamando onTipoSelecionado para express');
-        onTipoSelecionado('express', prioridadeNivel);
+        onTipoSelecionado('express', finalPrioridade, undefined, efnrhFlag);
       } else if (tipoInicial === 'check-in') {
         // Decidir tipo de check-in com base nas respostas anteriores
         if (isProprietario) {
-          console.log('Fluxo check-in: proprietario → gerar');
-          onTipoSelecionado('proprietario', prioridadeNivel, numeroApartamento || undefined);
+          onTipoSelecionado('proprietario', finalPrioridade, numeroApartamento || undefined, efnrhFlag);
         } else if (fezWebCheckin) {
-          console.log('Fluxo check-in: web → express');
-          onTipoSelecionado('express', prioridadeNivel);
+          onTipoSelecionado('express', finalPrioridade, undefined, efnrhFlag);
         } else {
-          console.log('Fluxo check-in: sem web → normal');
-          onTipoSelecionado('normal', prioridadeNivel);
+          onTipoSelecionado('normal', finalPrioridade, undefined, efnrhFlag);
         }
       }
     } else if (etapaAtual === 'checkin_tipo') {
       // Compatibilidade (não usado no novo fluxo completo)
       const tipoCheckin = resposta ? 'express' : 'normal';
-      console.log('Chamando onTipoSelecionado (compat) para checkin:', { tipoCheckin, prioridadeEscolhida });
-      onTipoSelecionado(tipoCheckin, prioridadeEscolhida);
+      const finalPrioridade = (assinouEfnrh ? 'prioritario' : prioridadeEscolhida);
+      onTipoSelecionado(tipoCheckin, finalPrioridade, undefined, assinouEfnrh ?? undefined);
     } else if (etapaAtual === 'eh_proprietario') {
       setIsProprietario(resposta);
       if (resposta) {
-        console.log('Check-in: é proprietario → perguntar número do apartamento');
         setEtapaAtual('numero_apartamento');
       } else {
-        console.log('Check-in: não é proprietario → perguntar web check-in');
         setEtapaAtual('fez_web_checkin');
       }
     } else if (etapaAtual === 'fez_web_checkin') {
       setFezWebCheckin(resposta);
-      console.log('Check-in: perguntar prioridade');
-      setEtapaAtual('prioridade');
+      setEtapaAtual('assinou_efnrh');
+    } else if (etapaAtual === 'assinou_efnrh') {
+      setAssinouEfnrh(resposta);
+      // Remover pergunta extra de prioridade para Check-in: decidir e gerar diretamente
+      if (tipoInicial === 'check-in') {
+        const finalPrioridade = resposta ? 'prioritario' : 'comum';
+        const efnrhFlag = resposta ?? undefined;
+        if (isProprietario) {
+          onTipoSelecionado('proprietario', finalPrioridade, numeroApartamento || undefined, efnrhFlag);
+        } else if (fezWebCheckin) {
+          onTipoSelecionado('express', finalPrioridade, undefined, efnrhFlag);
+        } else {
+          onTipoSelecionado('normal', finalPrioridade, undefined, efnrhFlag);
+        }
+      } else {
+        setEtapaAtual('prioridade');
+      }
     }
   };
 
@@ -115,6 +125,11 @@ export default function FluxoPerguntas({ tipoInicial, onTipoSelecionado, onVolta
         { valor: false, texto: "Não" }
       ];
     } else if (etapaAtual === 'fez_web_checkin') {
+      return [
+        { valor: true, texto: "Sim" },
+        { valor: false, texto: "Não" }
+      ];
+    } else if (etapaAtual === 'assinou_efnrh') {
       return [
         { valor: true, texto: "Sim" },
         { valor: false, texto: "Não" }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -8,7 +8,6 @@ import { useToast } from "@/hooks/use-toast";
 import SenhaCard from "@/components/SenhaCard";
 import Layout from "@/components/Layout";
 import { Phone, CheckCircle, RotateCcw, X, Users, Star } from "lucide-react";
-// Removed Radix Select in favor of native select for stability
 import type { Tables } from "@/integrations/supabase/types";
 
 export default function Admin() {
@@ -17,8 +16,17 @@ export default function Admin() {
   const [guiche, setGuiche] = useState<string | null>(null);
   const [atendente, setAtendente] = useState("");
   const { toast } = useToast();
+  const [tipoAtendendo, setTipoAtendendo] = useState<string>(() => {
+    try {
+      return localStorage.getItem('admin_tipo_atendendo') || '';
+    } catch {
+      return '';
+    }
+  });
+  useEffect(() => {
+    localStorage.setItem('admin_tipo_atendendo', tipoAtendendo);
+  }, [tipoAtendendo]);
 
-  // Persistência local de guichê e atendente
   useEffect(() => {
     const savedGuiche = localStorage.getItem('admin_guiche');
     const savedAtendente = localStorage.getItem('admin_nome');
@@ -42,7 +50,12 @@ export default function Admin() {
     }
   }, [atendente]);
 
-  async function carregar() {
+  // atendendoFila removido; usando tipoAtendendo
+
+  // Persistência antiga de 'admin_atendendo_fila' removida; usando 'admin_tipo_atendendo'
+
+
+  const carregar = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('senhas')
@@ -67,7 +80,7 @@ export default function Admin() {
           : String(e);
       toast({ title: "Erro ao carregar", description, variant: "destructive" });
     }
-  }
+  }, [toast]);
 
   useEffect(() => {
     carregar();
@@ -81,7 +94,7 @@ export default function Admin() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [carregar]);
 
   const chamarProxima = async () => {
     if (!guiche || !atendente) {
@@ -96,6 +109,19 @@ export default function Admin() {
     try {
       // Buscar próxima senha aguardando (preferencial tem prioridade)
       const aguardando = senhas.filter(s => s.status === 'aguardando')
+        .filter(s => {
+          if (!tipoAtendendo) return true;
+          const obs = String(s.observacoes || '').toLowerCase();
+          const tipoNorm = String(s.tipo).toLowerCase();
+          const group = tipoNorm === 'check-out' ? 'check-out'
+                       : /checkin:proprietario/.test(obs) ? 'proprietario'
+                       : /checkin:express/.test(obs) ? 'express'
+                       : /checkin:normal/.test(obs) ? 'normal'
+                       : 'atendimento';
+          const prioridade = (tipoNorm === 'preferencial' || /prioridade:prioritario/.test(obs)) ? 'prioridade' : 'comum';
+          const key = `${group}_${prioridade}`;
+          return key === tipoAtendendo;
+        })
         .sort((a, b) => {
           // Preferenciais primeiro
           if (a.tipo === 'preferencial' && b.tipo !== 'preferencial') return -1;
@@ -263,111 +289,134 @@ export default function Admin() {
           </Card>
         </div>
 
-        {/* Controles */}
-        <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4">Chamar Próxima Senha</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label htmlFor="guiche">Guichê</Label>
-              <select
-                id="guiche"
-                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                value={guiche ?? ""}
-                onChange={(e) => setGuiche(e.target.value || null)}
-              >
-                <option value="" disabled>Selecione</option>
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-                <option value="6">6</option>
-                <option value="7">7</option>
-                <option value="8">8</option>
-                <option value="9">9</option>
-                <option value="10">10</option>
-              </select>
-            </div>
-            <div>
-              <Label htmlFor="atendente">Atendente</Label>
-              <Input
-                id="atendente"
-                placeholder="Nome do atendente"
-                value={atendente}
-                onChange={(e) => setAtendente(e.target.value)}
-              />
-            </div>
-            <div className="flex items-end">
-              <Button onClick={chamarProxima} className="w-full">
-                <Phone className="w-4 h-4 mr-2" />
-                Chamar Próxima
-              </Button>
-            </div>
-          </div>
-        </Card>
-
-        {/* Filas */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Aguardando Preferencial */}
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Star className="w-5 h-5 text-warning" />
-              <h3 className="text-lg font-semibold">Fila Preferencial ({aguardandoPreferencial.length})</h3>
-            </div>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {aguardandoPreferencial.map((senha) => (
-                <SenhaCard key={senha.id} senha={senha} />
-              ))}
-              {aguardandoPreferencial.length === 0 && (
-                <p className="text-center text-muted-foreground py-8">Nenhuma senha preferencial aguardando</p>
-              )}
-            </div>
-          </Card>
-
-          {/* Aguardando Normal */}
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Users className="w-5 h-5 text-primary" />
-              <h3 className="text-lg font-semibold">Fila Normal ({aguardandoNormal.length})</h3>
-            </div>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {aguardandoNormal.map((senha) => (
-                <SenhaCard key={senha.id} senha={senha} />
-              ))}
-              {aguardandoNormal.length === 0 && (
-                <p className="text-center text-muted-foreground py-8">Nenhuma senha normal aguardando</p>
-              )}
-            </div>
-          </Card>
-        </div>
-
-        {/* Senhas Chamando */}
-        <Card className="p-6">
-          <h3 className="text-lg font-semibold mb-4">Senhas em Atendimento ({chamando.length})</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {chamando.map((senha) => (
-              <div key={senha.id} className="space-y-3">
-                <SenhaCard senha={senha} />
-                <div className="flex gap-2">
-                  <Button onClick={() => finalizar(senha.id)} className="flex-1" size="sm">
-                    <CheckCircle className="w-4 h-4 mr-1" />
-                    Finalizar
-                  </Button>
-                  <Button onClick={() => voltar(senha.id)} variant="outline" size="sm">
-                    <RotateCcw className="w-4 h-4" />
-                  </Button>
-                  <Button onClick={() => cancelar(senha.id)} variant="destructive" size="sm">
-                    <X className="w-4 h-4" />
-                  </Button>
+              {/* Controles */}
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4">Chamar Próxima Senha</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="guiche">Guichê</Label>
+                    <select
+                      id="guiche"
+                      title="Guichê"
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={guiche ?? ""}
+                      onChange={(e) => setGuiche(e.target.value || null)}
+                    >
+                      <option value="" disabled>Selecione</option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                      <option value="5">5</option>
+                      <option value="6">6</option>
+                      <option value="7">7</option>
+                      <option value="8">8</option>
+                      <option value="9">9</option>
+                      <option value="10">10</option>
+                    </select>
+                  </div>
+                  
+                  {/* Substituído por select único abaixo */}
+                  <div>
+                    <Label htmlFor="tipoAtendendo">Atendendo Fila</Label>
+                    <select
+                      id="tipoAtendendo"
+                      title="Tipo de fila atendida"
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={tipoAtendendo}
+                      onChange={(e) => setTipoAtendendo(e.target.value)}
+                    >
+                      <option value="">Todas</option>
+                      <option value="atendimento_prioridade">Atendimento-Prioridade</option>
+                      <option value="atendimento_comum">Atendimento- Normal</option>
+                      <option value="check-out_prioridade">Check-out - Prioridade</option>
+                      <option value="check-out_comum">Check-out - comum</option>
+                      <option value="proprietario_prioridade">Proprietário- Prioridade</option>
+                      <option value="proprietario_comum">Proprietário- Comum</option>
+                      <option value="express_prioridade">Express - Prioridade</option>
+                      <option value="express_comum">Express - Comum</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label htmlFor="atendente">Nome do atendente</Label>
+                    <Input
+                      id="atendente"
+                      placeholder="Nome do atendente"
+                      value={atendente}
+                      onChange={(e) => setAtendente(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button onClick={chamarProxima} className="w-full">
+                      <Phone className="w-4 h-4 mr-2" />
+                      Chamar Próxima
+                    </Button>
+                  </div>
                 </div>
+              </Card>
+
+              {/* Filas */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Aguardando Preferencial */}
+                <Card className="p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Star className="w-5 h-5 text-warning" />
+                    <h3 className="text-lg font-semibold">Fila Prioritária ({aguardandoPreferencial.length})</h3>
+                  </div>
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {aguardandoPreferencial.map((senha) => (
+                      <SenhaCard key={senha.id} senha={senha} />
+                    ))}
+                    {aguardandoPreferencial.length === 0 && (
+                      <p className="text-center text-muted-foreground py-8">Nenhuma senha prioritária aguardando</p>
+                    )}
+                  </div>
+                </Card>
+
+                {/* Aguardando Normal */}
+                <Card className="p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Users className="w-5 h-5 text-primary" />
+                    <h3 className="text-lg font-semibold">Fila Comum ({aguardandoNormal.length})</h3>
+                  </div>
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {aguardandoNormal.map((senha) => (
+                      <SenhaCard key={senha.id} senha={senha} />
+                    ))}
+                    {aguardandoNormal.length === 0 && (
+                      <p className="text-center text-muted-foreground py-8">Nenhuma senha comum aguardando</p>
+                    )}
+                  </div>
+                </Card>
               </div>
-            ))}
-            {chamando.length === 0 && (
-              <p className="text-center text-muted-foreground py-8 col-span-full">Nenhuma senha em atendimento</p>
-            )}
-          </div>
-        </Card>
-      </div>
-    </Layout>
-  );
-}
+
+              {/* Senhas Chamando */}
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4">Senhas Chamando Agora ({chamando.length})</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {chamando.map((senha) => (
+                    <div key={senha.id} className="space-y-3">
+                      <SenhaCard senha={senha} />
+                      <div className="flex gap-2">
+                        <Button onClick={() => finalizar(senha.id)} className="flex-1" size="sm">
+                          <CheckCircle className="w-4 h-4 mr-1" />
+                          Finalizar
+                        </Button>
+                        <Button onClick={() => voltar(senha.id)} variant="outline" size="sm">
+                          <RotateCcw className="w-4 h-4" />
+                        </Button>
+                        <Button onClick={() => cancelar(senha.id)} variant="destructive" size="sm">
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {chamando.length === 0 && (
+                    <p className="text-center text-muted-foreground py-8 col-span-full">Nenhuma senha chamando agora</p>
+                  )}
+                </div>
+              </Card>
+            </div>
+          </Layout>
+        );
+    }
