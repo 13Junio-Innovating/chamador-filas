@@ -251,9 +251,52 @@ export default function Admin() {
     }
   };
 
-  const aguardandoNormal = senhas.filter(s => s.status === 'aguardando' && s.tipo !== 'preferencial');
-  const aguardandoPreferencial = senhas.filter(s => s.status === 'aguardando' && s.tipo === 'preferencial');
-  const chamando = senhas.filter(s => s.status === 'chamando');
+  const aguardandoNormal = senhas
+    .filter(s => s.status === 'aguardando' && s.tipo !== 'preferencial')
+    .filter(s => {
+      if (!tipoAtendendo) return true;
+      const obs = String(s.observacoes || '').toLowerCase();
+      const tipoNorm = String(s.tipo).toLowerCase();
+      const group = tipoNorm === 'check-out' ? 'check-out'
+                   : /checkin:proprietario/.test(obs) ? 'proprietario'
+                   : /checkin:express/.test(obs) ? 'express'
+                   : /checkin:normal/.test(obs) ? 'normal'
+                   : 'atendimento';
+      const prioridade = (tipoNorm === 'preferencial' || /prioridade:prioritario/.test(obs)) ? 'prioridade' : 'comum';
+      const key = `${group}_${prioridade}`;
+      return key === tipoAtendendo;
+    });
+  const aguardandoPreferencial = senhas
+    .filter(s => s.status === 'aguardando' && s.tipo === 'preferencial')
+    .filter(s => {
+      if (!tipoAtendendo) return true;
+      const obs = String(s.observacoes || '').toLowerCase();
+      const tipoNorm = String(s.tipo).toLowerCase();
+      const group = tipoNorm === 'check-out' ? 'check-out'
+                   : /checkin:proprietario/.test(obs) ? 'proprietario'
+                   : /checkin:express/.test(obs) ? 'express'
+                   : /checkin:normal/.test(obs) ? 'normal'
+                   : 'atendimento';
+      const prioridade = (tipoNorm === 'preferencial' || /prioridade:prioritario/.test(obs)) ? 'prioridade' : 'comum';
+      const key = `${group}_${prioridade}`;
+      return key === tipoAtendendo;
+    });
+
+  const chamando = senhas
+    .filter(s => s.status === 'chamando')
+    .filter(s => {
+      if (!tipoAtendendo) return true;
+      const obs = String(s.observacoes || '').toLowerCase();
+      const tipoNorm = String(s.tipo).toLowerCase();
+      const group = tipoNorm === 'check-out' ? 'check-out'
+                   : /checkin:proprietario/.test(obs) ? 'proprietario'
+                   : /checkin:express/.test(obs) ? 'express'
+                   : /checkin:normal/.test(obs) ? 'normal'
+                   : 'atendimento';
+      const prioridade = (tipoNorm === 'preferencial' || /prioridade:prioritario/.test(obs)) ? 'prioridade' : 'comum';
+      const key = `${group}_${prioridade}`;
+      return key === tipoAtendendo;
+    });
 
   return (
     <Layout showThemeToggle={true}>
