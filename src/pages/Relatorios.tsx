@@ -33,8 +33,27 @@ interface Senha {
   numero_apartamento?: string | null;
   created_at?: string;
   updated_at?: string;
+  observacoes?: string | null;
 }
 
+// Tipo para linhas retornadas do banco (inclui campos auxiliares)
+interface SenhaRow {
+  id: string;
+  numero: number;
+  tipo: SenhaTipo | string;
+  status: SenhaStatus | string;
+  hora_retirada: string;
+  hora_chamada: string | null;
+  hora_atendimento: string | null;
+  guiche: string | null;
+  atendente?: string | null;
+  atendente_nome?: string | null;
+  usuario_nome?: string | null;
+  numero_apartamento?: string | null;
+  observacoes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
 export default function Relatorios() {
   const [senhas, setSenhas] = useState<Senha[]>([]);
   const [loading, setLoading] = useState(false);
@@ -91,7 +110,7 @@ export default function Relatorios() {
 
       if (error) throw error;
 
-      const rows = (data || []) as any[];
+      const rows = (data || []) as SenhaRow[];
 
       const extractApartamento = (obs?: string | null): string | null => {
         if (!obs) return null;
@@ -114,6 +133,7 @@ export default function Relatorios() {
         numero_apartamento: ((r.numero_apartamento ?? null) as string | null) ?? extractApartamento(r.observacoes),
         created_at: r.created_at,
         updated_at: r.updated_at,
+        observacoes: r.observacoes ?? null,
       }));
 
       setSenhas(normalizadas);
@@ -142,18 +162,51 @@ export default function Relatorios() {
       default: return "N";
     }
   }
-  const numero = (s: Senha) => `${getPrefixo(s.tipo)}${String(s.numero).padStart(3, "0")}`;
+   const numero = (s: Senha) => `${getPrefixo(s.tipo)}${String(s.numero).padStart(3, "0")}`;
+   const normalizeTipo = (tipo: string) => tipo
+     .toLowerCase()
+     .normalize('NFD')
+     .replace(/[\u0300-\u036f]/g, '');
+   
+   const getCodigoComposto = (s: Senha) => {
+     const num = String(s.numero).padStart(4, '0');
+     const obs = String(s.observacoes ?? '').toLowerCase();
+     const isPrioritario = /prioritario/i.test(obs) || normalizeTipo(s.tipo) === 'preferencial';
+   
+     if (normalizeTipo(s.tipo) === 'check-out') {
+       const code = isPrioritario ? 'COXP' : 'COXC';
+       return `${code}-${num}`;
+     }
+   
+     if (/checkin:express/i.test(obs)) {
+       const code = isPrioritario ? 'CIEP' : 'CIEC';
+       return `${code}-${num}`;
+     }
+     if (/checkin:normal/i.test(obs)) {
+       const code = isPrioritario ? 'CINP' : 'CIEN';
+       return `${code}-${num}`;
+     }
+     if (/checkin:proprietario/i.test(obs) || normalizeTipo(s.tipo) === 'proprietario') {
+       const code = isPrioritario ? 'CIPP' : 'CIPC';
+       return `${code}-${num}`;
+     }
+   
+     // Atendimento padrão
+     const code = isPrioritario ? 'ATNP' : 'ATNC';
+     return `${code}-${num}`;
+   };
+   const codigo = (s: Senha) => getCodigoComposto(s);
   const fmt = (d: string | null) => d ? new Date(d).toLocaleString("pt-BR") : "-";
 
   // Helpers para nomes e cores
   const tipoNome = (tipo: string) => {
     switch (tipo) {
-      case "preferencial": return "Preferencial";
+      case "preferencial": return "Prioritária";
       case "proprietario": return "Proprietário";
       case "check-in": return "Check-in";
       case "check-out": return "Check-out";
       case "express": return "Express";
-      default: return "Normal";
+      default: return "Comum";
     }
   };
 
@@ -200,12 +253,12 @@ export default function Relatorios() {
     }
 
     const sep = ";";
-    const header = `sep=${sep}\r\nNumero;Tipo;Status;Retirada;Chamada;Atendimento;Guiche;Atendente;Apartamento`;
+    const header = `sep=${sep}\r\nCódigo;Tipo;Status;Retirada;Chamada;Atendimento;Guiche;Atendente;Apartamento`;
     const rows = senhas.map(s => {
-      const numeroText = `="${numero(s)}"`;
+      const codigoText = `="${codigo(s)}"`;
       const cols = [
-        numeroText,
-        s.tipo,
+        codigoText,
+        tipoNome(s.tipo),
         s.status,
         fmt(s.hora_retirada),
         fmt(s.hora_chamada),
@@ -242,7 +295,7 @@ export default function Relatorios() {
     }
 
     const header = [
-      "Numero",
+      "Código",
       "Tipo",
       "Status",
       "Retirada",
@@ -253,19 +306,8 @@ export default function Relatorios() {
       "Apartamento",
     ];
 
-    const tipoNome = (tipo: string) => {
-      switch (tipo) {
-        case "preferencial": return "Preferencial";
-        case "proprietario": return "Proprietário";
-        case "check-in": return "Check-in";
-        case "check-out": return "Check-out";
-        case "express": return "Express";
-        default: return "Normal";
-      }
-    };
-
     const rows = senhas.map((s) => [
-      `${numero(s)}`,
+      `${codigo(s)}`,
       tipoNome(s.tipo),
       s.status,
       fmt(s.hora_retirada),
@@ -472,7 +514,7 @@ export default function Relatorios() {
             <table className="w-full">
               <thead>
                 <tr className="border-b">
-                  <th className="text-left p-3">Número</th>
+                  <th className="text-left p-3">Código</th>
                   <th className="text-left p-3">Tipo</th>
                   <th className="text-left p-3">Status</th>
                   <th className="text-left p-3">Retirada</th>
@@ -485,8 +527,8 @@ export default function Relatorios() {
               <tbody>
                 {senhas.map((s) => (
                   <tr key={s.id} className="border-b hover:bg-muted/50">
-                    <td className="p-3 font-mono font-bold">{numero(s)}</td>
-                    <td className="p-3">{s.tipo}</td>
+                    <td className="p-3 font-mono font-bold">{codigo(s)}</td>
+                    <td className="p-3">{tipoNome(s.tipo)}</td>
                     <td className="p-3">
                       <span className={`px-2 py-1 rounded text-xs font-medium ${
                         s.status === 'aguardando' ? 'bg-warning/10 text-warning' :
