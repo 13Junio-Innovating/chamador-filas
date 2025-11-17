@@ -278,9 +278,30 @@ export default function Atendente() {
     return new Date(a.hora_retirada).getTime() - new Date(b.hora_retirada).getTime();
   });
 
-  const aguardandoNormal = senhasOrdenadas.filter(s => s.status === 'aguardando' && s.tipo !== 'preferencial');
-  const aguardandoPreferencial = senhasOrdenadas.filter(s => s.status === 'aguardando' && s.tipo === 'preferencial');
-  const chamando = senhasOrdenadas.filter(s => s.status === 'chamando');
+  const matchesTipoAtendendo = (s: Tables<'senhas'>) => {
+    if (!tipoAtendendo) return true;
+    const obs = String(s.observacoes || '').toLowerCase();
+    const tipoNorm = String(s.tipo).toLowerCase();
+    const group = tipoNorm === 'check-out' ? 'check-out'
+                 : /checkin:proprietario/.test(obs) ? 'proprietario'
+                 : /checkin:express/.test(obs) ? 'express'
+                 : /checkin:normal/.test(obs) ? 'normal'
+                 : 'atendimento';
+    const prioridade = (tipoNorm === 'preferencial' || /prioridade:prioritario/.test(obs)) ? 'prioridade' : 'comum';
+    const key = `${group}_${prioridade}`;
+    return key === tipoAtendendo;
+  };
+
+  const aguardandoNormal = senhasOrdenadas
+    .filter(s => s.status === 'aguardando' && s.tipo !== 'preferencial')
+    .filter(matchesTipoAtendendo);
+  const aguardandoPreferencial = senhasOrdenadas
+    .filter(s => s.status === 'aguardando' && s.tipo === 'preferencial')
+    .filter(matchesTipoAtendendo);
+
+  const chamando = senhasOrdenadas
+    .filter(s => s.status === 'chamando')
+    .filter(matchesTipoAtendendo);
 
   const proximasSenhas = senhas
     .filter(s => s.status === 'aguardando')
@@ -364,7 +385,7 @@ export default function Atendente() {
               </select>
             </div>
             <div>
-              <Label htmlFor="tipoAtendendo">Tipo</Label>
+              <Label htmlFor="tipoAtendendo">Atendendo fila</Label>
               <select
                 id="tipoAtendendo"
                 title="Tipo de fila atendida"
