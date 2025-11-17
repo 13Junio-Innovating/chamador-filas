@@ -99,7 +99,7 @@ export default function Painel() {
           osc.frequency.value = 440;
           osc.start(ctx.currentTime);
           osc.stop(ctx.currentTime + 0.01);
-        } catch {}
+        } catch (e) { void e; }
       }
       // "Aquecer" o speechSynthesis com uma utterance silenciosa
       if (window.speechSynthesis) {
@@ -108,10 +108,10 @@ export default function Painel() {
           u.lang = 'pt-BR';
           u.volume = 0;
           window.speechSynthesis.speak(u);
-        } catch {}
+        } catch (e) { void e; }
       }
       audioUnlockedRef.current = true;
-    } catch {}
+    } catch (e) { void e; }
   }, []);
 
   useEffect(() => {
@@ -149,7 +149,7 @@ export default function Painel() {
       gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (e) {}
+    } catch (e) { void e; }
   }, [audioEnabled]);
 
   // Função para processar a fila de anúncios - otimizada
@@ -535,7 +535,7 @@ export default function Painel() {
                   {finalizadas.map((senha) => (
                     <div key={senha.id} className="bg-success/20 border border-success/30 rounded-lg p-3 text-center backdrop-blur-sm">
                       <div className="text-xl font-bold text-white mb-1">
-                        {getPrefixo(senha.tipo)}{String(senha.numero).padStart(3, "0")}
+                        {getCodigoComposto(senha)}
                       </div>
                       <div className="text-xs font-mono text-white/70">{tempos[senha.id]}</div>
                     </div>
@@ -555,7 +555,7 @@ export default function Painel() {
 }
 function getCodigoComposto(s: Senha) {
   const num = String(s.numero).padStart(4, '0');
-  const obs = String((s as any).observacoes || '').toLowerCase();
+  const obs = String(s.observacoes ?? '').toLowerCase();
   const isPrioritario = /prioritario/i.test(obs) || normalizeTipo(s.tipo) === 'preferencial';
 
   if (normalizeTipo(s.tipo) === 'check-out') {
@@ -568,7 +568,7 @@ function getCodigoComposto(s: Senha) {
     return `${code}-${num}`;
   }
   if (/checkin:normal/i.test(obs)) {
-    const code = isPrioritario ? 'CINP' : 'CINC';
+    const code = isPrioritario ? 'CINP' : 'CIEN';
     return `${code}-${num}`;
   }
   if (/checkin:proprietario/i.test(obs) || normalizeTipo(s.tipo) === 'proprietario') {
